@@ -11,13 +11,14 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from llama_index.core.schema import NodeWithScore
 
-from app.config import MAX_RETRIEVE_RETRIES, RETRIEVE_TOP_K
+from app.config import ENABLE_QUERY_REWRITE, MAX_RETRIEVE_RETRIES, RETRIEVE_TOP_K
 from app.index import (
     build_context,
     format_nodes,
     generate_answer,
     is_retrieval_weak,
     retrieve_nodes,
+    rewrite_query,
 )
 
 
@@ -62,12 +63,16 @@ def _output(state: RAGState) -> dict:
 
 
 def _prepare_retry(state: RAGState) -> dict:
-    """节点：扩大检索范围，准备重检索。"""
+    """节点：改写查询（或扩大检索）后重试。"""
+    if ENABLE_QUERY_REWRITE:
+        new_query = rewrite_query(state["question"], state["search_query"])
+    else:
+        new_query = state["question"]
     return {
         "retry_count": state["retry_count"] + 1,
         "top_k": state["top_k"] + 3,
         "doc_type": "all",
-        "search_query": state["question"],
+        "search_query": new_query,
     }
 
 

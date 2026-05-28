@@ -33,6 +33,7 @@ from app.config import (
     ENABLE_RERANK,
     LLM_MAX_TOKENS,
     LLM_TIMEOUT,
+    QUERY_REWRITE_PROMPT,
     RAG_SYSTEM_PROMPT,
     RERANK_MODEL,
     RETRIEVE_CANDIDATE_K,
@@ -326,6 +327,16 @@ def generate_answer(question: str, context: str) -> str:
             f"Chat 服务不可用 ({CHAT_BASE_URL})，请确认 llama.cpp 对话模型已启动: {exc}"
         ) from exc
     return str(response).strip()
+
+
+def rewrite_query(question: str, prev_query: str) -> str:
+    """LLM 改写检索查询；空输出时回退原始问题。"""
+    prompt = QUERY_REWRITE_PROMPT.format(question=question, prev_query=prev_query)
+    try:
+        rewritten = str(get_llm().complete(prompt)).strip()
+    except Exception:
+        return question
+    return rewritten or question
 
 
 def insert_text_nodes(nodes: list[TextNode]) -> None:
