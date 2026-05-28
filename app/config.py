@@ -67,6 +67,8 @@ ENABLE_QUERY_REWRITE = os.getenv("ENABLE_QUERY_REWRITE", "true").lower() == "tru
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
+SOURCES_CONFIG_PATH = os.getenv("SOURCES_CONFIG_PATH", "sources.toml")
+
 DOCUMENT_SOURCES: dict[str, DocumentSource] = {
     "prompts": DocumentSource(
         key="prompts",

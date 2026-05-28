@@ -8,8 +8,11 @@
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
-from app.config import CHUNK_OVERLAP, CHUNK_SIZE, DOCUMENT_SOURCES, DocumentSource
+from app.config import CHUNK_OVERLAP, CHUNK_SIZE, SOURCES_CONFIG_PATH
+from app.connectors import RawDocument, build_connector
+from app.sources import load_source_configs
 
 
 @dataclass(frozen=True)
@@ -88,68 +91,41 @@ def chunk_markdown(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK
     return chunks or [cleaned]
 
 
-def _load_source(source: DocumentSource) -> list[ChunkRecord]:
-    """从单个文档源加载并分块。"""
-    if not source.root.exists():
-        return []
-
-    records: list[ChunkRecord] = []
-    for md_file in source.root.rglob("*.md"):
-        if md_file.name in source.skip_files:
-            continue
-
-        rel_path = md_file.relative_to(source.root).as_posix()
-        category = rel_path.split("/")[0] if "/" in rel_path else "根目录"
-        base_id = f"{source.doc_type}_{rel_path.replace('/', '_').replace('.md', '')}"
-        parts = chunk_markdown(md_file.read_text(encoding="utf-8"))
-        total = len(parts)
-
-        for index, part in enumerate(parts):
-            records.append(
-                ChunkRecord(
-                    chunk_id=f"{base_id}__{index}",
-                    text=part,
-                    metadata={
-                        "source": rel_path,
-                        "category": category,
-                        "title": md_file.stem,
-                        "doc_type": source.doc_type,
-                        "library": source.root.name,
-                        "chunk_index": index,
-                        "chunk_total": total,
-                    },
-                )
-            )
-    return records
+def chunk_document(doc: RawDocument) -> list[ChunkRecord]:
+    """按格式分块：md 走标题分块，其余走滑窗。"""
+    parts = chunk_markdown(doc.text) if doc.fmt == "md" else _split_long_text(doc.text, CHUNK_SIZE, CHUNK_OVERLAP)
+    total = len(parts)
+    return [
+        ChunkRecord(
+            chunk_id=f"{doc.doc_id}__{i}",
+            text=part,
+            metadata={**doc.metadata, "chunk_index": i, "chunk_total": total},
+        )
+        for i, part in enumerate(parts)
+    ]
 
 
-def load_chunks(source_keys: list[str]) -> list[ChunkRecord]:
-    """
-    按源标识加载分块记录。
-
-    Args:
-        source_keys: 如 ["prompts", "docs"]
-
-    Returns:
-        分块列表
+def load_chunks(source_names: list[str]) -> list[ChunkRecord]:
+    """按源名加载分块（source_names 为空表示全部）。
 
     Raises:
-        ValueError: 源无效或无文档时
+        ValueError: 源名无效或无文档时
     """
-    if not source_keys:
-        raise ValueError("至少需要指定一个文档源")
+    configs = load_source_configs(Path(SOURCES_CONFIG_PATH))
+    by_name = {c.name: c for c in configs}
+    selected = configs if not source_names else []
+    for name in source_names:
+        if name not in by_name:
+            raise ValueError(f"未知数据源: {name}（可用: {sorted(by_name)}）")
+        selected.append(by_name[name])
 
     records: list[ChunkRecord] = []
-    for key in source_keys:
-        source = DOCUMENT_SOURCES.get(key)
-        if source is None:
-            raise ValueError(f"未知文档源: {key}")
-        records.extend(_load_source(source))
+    for cfg in selected:
+        for doc in build_connector(cfg).load():
+            records.extend(chunk_document(doc))
 
     if not records:
-        roots = ", ".join(str(DOCUMENT_SOURCES[k].root) for k in source_keys)
-        raise ValueError(f"未找到可导入文档: {roots}")
-
+        raise ValueError("未找到可导入文档，请检查 sources.toml 的 root/urls")
     return records
 
 
