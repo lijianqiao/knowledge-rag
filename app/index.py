@@ -8,6 +8,7 @@
 
 import chromadb
 from llama_index.core import VectorStoreIndex
+from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.schema import NodeWithScore, TextNode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -24,15 +25,19 @@ from app.config import (
     DB_PATH,
     EMBED_BASE_URL,
     EMBED_MODEL,
+    ENABLE_RERANK,
     LLM_MAX_TOKENS,
     LLM_TIMEOUT,
     RAG_SYSTEM_PROMPT,
+    RERANK_MODEL,
+    RETRIEVE_CANDIDATE_K,
     RETRIEVE_SCORE_THRESHOLD,
 )
 
 _embed_model: OpenAIEmbedding | None = None
 _llm: OpenAILike | None = None
 _index: VectorStoreIndex | None = None
+_reranker: SentenceTransformerRerank | None = None
 
 
 def get_embed_model() -> OpenAIEmbedding:
@@ -122,13 +127,45 @@ def _build_metadata_filters(doc_type: str) -> MetadataFilters | None:
     return MetadataFilters(filters=[MetadataFilter(key="doc_type", value=doc_type)])
 
 
+def get_reranker() -> SentenceTransformerRerank | None:
+    """获取 cross-encoder 重排器单例；关闭时返回 None。
+
+    top_n 设为 RETRIEVE_CANDIDATE_K：让 reranker 对全部候选重排后悉数返回，
+    最终保留几条由调用方传入的 top_n（即 CLI -n）决定，避免固定值覆盖 -n（S1）。
+    """
+    global _reranker
+    if not ENABLE_RERANK:
+        return None
+    if _reranker is None:
+        _reranker = SentenceTransformerRerank(model=RERANK_MODEL, top_n=RETRIEVE_CANDIDATE_K)
+    return _reranker
+
+
+def apply_rerank(
+    reranker: SentenceTransformerRerank | None,
+    query: str,
+    nodes: list[NodeWithScore],
+    top_n: int,
+) -> list[NodeWithScore]:
+    """对召回节点重排并截断到 top_n；reranker 为 None 时仅按原序截断。
+
+    切片统一在此完成，确保返回条数始终等于 top_n（不受 reranker 内部 top_n 影响）。
+    """
+    if not nodes:
+        return []
+    if reranker is None:
+        return nodes[:top_n]
+    reranked = reranker.postprocess_nodes(nodes, query_str=query)
+    return reranked[:top_n]
+
+
 def retrieve_nodes(
     query: str,
     top_k: int = 5,
     doc_type: str = "all",
 ) -> list[NodeWithScore]:
     """
-    LlamaIndex 发起检索：问题向量化 → ChromaDB 相似度召回。
+    LlamaIndex 发起检索：问题向量化 → ChromaDB 相似度召回 → cross-encoder 重排。
 
     Args:
         query: 检索文本
@@ -144,12 +181,14 @@ def retrieve_nodes(
     if get_chroma_collection().count() == 0:
         raise ValueError("向量库为空，请先执行 import")
 
+    candidate_k = max(top_k, RETRIEVE_CANDIDATE_K)
     index = get_index()
     retriever = index.as_retriever(
-        similarity_top_k=top_k,
+        similarity_top_k=candidate_k,
         filters=_build_metadata_filters(doc_type),
     )
-    return retriever.retrieve(query)
+    nodes = retriever.retrieve(query)
+    return apply_rerank(get_reranker(), query, nodes, top_n=top_k)
 
 
 def build_context(nodes: list[NodeWithScore]) -> str:
