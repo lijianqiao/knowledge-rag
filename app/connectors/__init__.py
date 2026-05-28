@@ -53,3 +53,7 @@ def build_connector(cfg: SourceConfig) -> Connector:
 from app.connectors.filesystem import FilesystemConnector  # noqa: E402
 
 register_connector("filesystem", FilesystemConnector.from_config)
+
+from app.connectors.web import WebConnector  # noqa: E402
+
+register_connector("web", WebConnector.from_config)
