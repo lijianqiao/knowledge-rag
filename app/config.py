@@ -51,6 +51,19 @@ RETRIEVE_TOP_K = int(os.getenv("RETRIEVE_TOP_K", "5"))
 MAX_RETRIEVE_RETRIES = int(os.getenv("MAX_RETRIEVE_RETRIES", "2"))
 RETRIEVE_SCORE_THRESHOLD = float(os.getenv("RETRIEVE_SCORE_THRESHOLD", "0.35"))
 
+# 宽召回 → 重排（2026 基线：先宽召回再 cross-encoder 重排）
+RETRIEVE_CANDIDATE_K = int(os.getenv("RETRIEVE_CANDIDATE_K", "30"))
+ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").lower() == "true"
+RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+# 注：重排后保留条数由调用方 top_k（CLI -n）决定，不再单独配 RERANK_TOP_N，避免覆盖 -n。
+
+# Hybrid 检索（稠密 + BM25 稀疏融合）
+ENABLE_HYBRID = os.getenv("ENABLE_HYBRID", "true").lower() == "true"
+BM25_TOP_K = int(os.getenv("BM25_TOP_K", "30"))
+
+# Query Rewriting（LLM 改写检索查询，替换弱重试）
+ENABLE_QUERY_REWRITE = os.getenv("ENABLE_QUERY_REWRITE", "true").lower() == "true"
+
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
@@ -77,3 +90,10 @@ RAG_SYSTEM_PROMPT = """你是企业运维知识库助手。请严格基于提供
 3. 使用中文，技术术语保留英文
 4. 回答末尾列出引用来源编号，如 [1][2]
 """
+
+QUERY_REWRITE_PROMPT = """你是检索查询优化助手。下面的查询召回结果不理想，请改写成更利于向量检索与关键词检索的查询。
+要求：保留原始意图，补全可能的同义词/术语，去掉口语化与无关词，只输出改写后的查询本身，不要解释。
+
+原始问题：{question}
+上次查询：{prev_query}
+改写后的查询："""
