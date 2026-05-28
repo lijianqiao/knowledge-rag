@@ -1,0 +1,22 @@
+[[sources]]
+name = "prompts"
+type = "filesystem"
+doc_type = "prompt"
+root = "运维prompt库"
+glob = "**/*.md"
+exclude = ["README.md", "Prompt模板规范.md"]
+
+[[sources]]
+name = "docs"
+type = "filesystem"
+doc_type = "doc"
+root = "运维文档"
+glob = "**/*.md"
+exclude = ["README.md"]
+
+# 示例：网页源（按需启用）
+# [[sources]]
+# name = "oncall-wiki"
+# type = "web"
+# doc_type = "doc"
+# urls = ["https://example.com/runbook"]
