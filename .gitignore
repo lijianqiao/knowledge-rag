@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# db
+chroma_db/
+
+# env
+.env
+
+# prompt 库
+运维prompt库/
+运维文档/
+
+# docs
+docs/
+
+# claude
+.claude/
+CLAUDE.md
+
+# llama.cpp
+llama.cpp/
