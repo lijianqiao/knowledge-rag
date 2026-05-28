@@ -17,7 +17,6 @@ chroma_db/
 
 # prompt 库
 运维prompt库/
-运维文档/
 
 # docs
 docs/
@@ -28,3 +27,8 @@ CLAUDE.md
 
 # llama.cpp
 llama.cpp/
+
+# cache
+.cache/
+.pytest_cache/
+
