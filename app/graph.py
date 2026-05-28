@@ -17,7 +17,7 @@ from app.index import (
     format_nodes,
     generate_answer,
     is_retrieval_weak,
-    retrieve_nodes,
+    retrieve_with_diagnostics,
     rewrite_query,
 )
 
@@ -31,6 +31,7 @@ class RAGState(TypedDict):
     retry_count: int
     search_query: str
     nodes: list[NodeWithScore]
+    best_vector_score: float
     context: str
     answer: str
     sources: str
@@ -39,13 +40,14 @@ class RAGState(TypedDict):
 
 def _retrieve(state: RAGState) -> dict:
     """节点：LlamaIndex 检索 + 组装 context。"""
-    nodes = retrieve_nodes(
+    nodes, best_vector_score = retrieve_with_diagnostics(
         query=state["search_query"],
         top_k=state["top_k"],
         doc_type=state["doc_type"],
     )
     return {
         "nodes": nodes,
+        "best_vector_score": best_vector_score,
         "context": build_context(nodes),
         "sources": format_nodes(nodes),
     }
@@ -81,10 +83,9 @@ def _route_after_output(state: RAGState) -> Literal["prepare_retry", "__end__"]:
     if state["retry_count"] >= MAX_RETRIEVE_RETRIES:
         return END
 
-    nodes = state.get("nodes") or []
     answer = state.get("answer") or ""
 
-    if is_retrieval_weak(nodes):
+    if is_retrieval_weak(state.get("best_vector_score", 0.0)):
         return "prepare_retry"
     if "信息不足" in answer:
         return "prepare_retry"
@@ -146,6 +147,7 @@ def run_ask(question: str, top_k: int = RETRIEVE_TOP_K, doc_type: str = "all") -
             "retry_count": 0,
             "search_query": question,
             "nodes": [],
+            "best_vector_score": 0.0,
             "context": "",
             "answer": "",
             "sources": "",

@@ -69,3 +69,105 @@ def test_retrieve_nodes_raises_on_empty_collection(monkeypatch):
         assert False, "应抛 ValueError"
     except ValueError:
         pass
+
+
+# --- F3: 融合后按 doc_type 兜底过滤 ---
+
+
+def test_filter_by_doc_type_keeps_only_matching():
+    nodes = [
+        NodeWithScore(node=TextNode(text="p", metadata={"doc_type": "prompt"})),
+        NodeWithScore(node=TextNode(text="d", metadata={"doc_type": "doc"})),
+    ]
+    out = index_mod._filter_by_doc_type(nodes, "prompt")
+    assert [n.get_content() for n in out] == ["p"]
+
+
+def test_filter_by_doc_type_all_is_passthrough():
+    nodes = [NodeWithScore(node=TextNode(text="x", metadata={"doc_type": "doc"}))]
+    assert index_mod._filter_by_doc_type(nodes, "all") == nodes
+
+
+# --- F1: weak 判断用向量余弦分，与融合/重排分解耦 ---
+
+
+def test_is_retrieval_weak_uses_threshold(monkeypatch):
+    monkeypatch.setattr(index_mod, "RETRIEVE_SCORE_THRESHOLD", 0.35)
+    assert index_mod.is_retrieval_weak(0.34) is True
+    assert index_mod.is_retrieval_weak(0.36) is False
+
+
+def test_retrieve_with_diagnostics_returns_vector_cosine_not_rrf(monkeypatch):
+    vec_nodes = [
+        NodeWithScore(node=TextNode(text="a"), score=0.71),
+        NodeWithScore(node=TextNode(text="b"), score=0.42),
+    ]
+    fused = [NodeWithScore(node=TextNode(text=f"f{i}"), score=0.016) for i in range(3)]
+
+    class _Coll:
+        def count(self):
+            return 2
+
+    class _VecRetriever:
+        def retrieve(self, query):
+            return vec_nodes
+
+    class _Index:
+        def as_retriever(self, **kwargs):
+            return _VecRetriever()
+
+    class _Fusion:
+        def retrieve(self, query):
+            return fused
+
+    monkeypatch.setattr(index_mod, "ENABLE_HYBRID", True)
+    monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
+    monkeypatch.setattr(index_mod, "get_index", lambda: _Index())
+    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda: object())
+    monkeypatch.setattr(index_mod, "get_llm", lambda: object())
+    monkeypatch.setattr(index_mod, "get_reranker", lambda: None)
+    monkeypatch.setattr(index_mod, "QueryFusionRetriever", lambda retrievers, **kwargs: _Fusion())
+
+    nodes, best = index_mod.retrieve_with_diagnostics("q", top_k=2, doc_type="all")
+    assert best == 0.71  # 取向量余弦最高分，而非融合 RRF 分 0.016
+    assert len(nodes) == 2  # 最终节点来自融合结果，截断到 top_k
+
+
+# --- F2: 真实 QueryFusionRetriever 在 num_queries=1 下离线可跑、且不调用 LLM ---
+
+
+def test_real_fusion_num_queries_1_does_not_call_llm():
+    from llama_index.core.llms import MockLLM
+    from llama_index.core.retrievers import BaseRetriever
+    from llama_index.core.retrievers import QueryFusionRetriever as RealQueryFusionRetriever
+
+    class _NoCallLLM(MockLLM):
+        def complete(self, *args, **kwargs):
+            raise AssertionError("num_queries=1 时不应调用 LLM")
+
+        def chat(self, *args, **kwargs):
+            raise AssertionError("num_queries=1 时不应调用 LLM")
+
+    class _MemRetriever(BaseRetriever):
+        def __init__(self, nodes):
+            self._nodes = nodes
+            super().__init__()
+
+        def _retrieve(self, query_bundle):
+            return self._nodes
+
+    r1 = _MemRetriever([NodeWithScore(node=TextNode(text="a", id_="1"), score=0.9)])
+    r2 = _MemRetriever([NodeWithScore(node=TextNode(text="b", id_="2"), score=0.8)])
+
+    fusion = RealQueryFusionRetriever(
+        [r1, r2],
+        llm=_NoCallLLM(),
+        similarity_top_k=5,
+        num_queries=1,
+        mode="reciprocal_rerank",
+        use_async=False,
+    )
+
+    out = fusion.retrieve("hello")  # 若触发 LLM，_NoCallLLM 会抛断言
+    assert len(out) >= 1
+    assert all(isinstance(n, NodeWithScore) for n in out)

@@ -201,21 +201,31 @@ def apply_rerank(
     return reranked[:top_n]
 
 
-def retrieve_nodes(
+def _filter_by_doc_type(nodes: list[NodeWithScore], doc_type: str) -> list[NodeWithScore]:
+    """按 doc_type 过滤节点（F3：BM25 通道不走 Chroma metadata 过滤，需在融合后兜底）。"""
+    if doc_type == "all":
+        return nodes
+    return [node for node in nodes if (node.metadata or {}).get("doc_type") == doc_type]
+
+
+def _retrieve_core(
     query: str,
-    top_k: int = 5,
-    doc_type: str = "all",
-) -> list[NodeWithScore]:
+    top_k: int,
+    doc_type: str,
+    *,
+    want_vector_score: bool,
+) -> tuple[list[NodeWithScore], float | None]:
     """
-    LlamaIndex 发起检索：问题向量化 → ChromaDB 相似度召回 → cross-encoder 重排。
+    检索核心：宽召回 →（Hybrid）稠密+BM25 融合 → 按类型过滤 → cross-encoder 重排。
 
     Args:
         query: 检索文本
         top_k: 返回条数
         doc_type: 文档类型过滤
+        want_vector_score: 是否额外计算向量召回最高余弦分（F1：weak 判断用，避免量纲混淆）
 
     Returns:
-        带分数的节点列表
+        (最终节点, 向量召回最高余弦分或 None)
 
     Raises:
         ValueError: 向量库为空时
@@ -229,20 +239,53 @@ def retrieve_nodes(
         filters=_build_metadata_filters(doc_type),
     )
 
+    best_vector_score: float | None = None
     if ENABLE_HYBRID:
+        # Hybrid 下融合分是 RRF，量纲与余弦不同；weak 判断需单独取一次向量召回的余弦分
+        if want_vector_score:
+            vector_nodes = vector_retriever.retrieve(query)
+            best_vector_score = max((n.score or 0.0) for n in vector_nodes) if vector_nodes else 0.0
         retriever = QueryFusionRetriever(
             [vector_retriever, get_bm25_retriever()],
             llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
             similarity_top_k=candidate_k,
-            num_queries=1,            # 不在此处做多查询，交给 Task 4 的改写
+            num_queries=1,            # 不在此处做多查询，交给改写节点
             mode="reciprocal_rerank", # RRF 融合
             use_async=False,
         )
+        nodes = retriever.retrieve(query)
     else:
-        retriever = vector_retriever
+        nodes = vector_retriever.retrieve(query)
+        best_vector_score = max((n.score or 0.0) for n in nodes) if nodes else 0.0
 
-    nodes = retriever.retrieve(query)
-    return apply_rerank(get_reranker(), query, nodes, top_n=top_k)
+    nodes = _filter_by_doc_type(nodes, doc_type)
+    final = apply_rerank(get_reranker(), query, nodes, top_n=top_k)
+    return final, best_vector_score
+
+
+def retrieve_nodes(
+    query: str,
+    top_k: int = 5,
+    doc_type: str = "all",
+) -> list[NodeWithScore]:
+    """通用检索入口（CLI query / 图首检索复用）。"""
+    nodes, _ = _retrieve_core(query, top_k, doc_type, want_vector_score=False)
+    return nodes
+
+
+def retrieve_with_diagnostics(
+    query: str,
+    top_k: int = 5,
+    doc_type: str = "all",
+) -> tuple[list[NodeWithScore], float]:
+    """
+    图重检索用：额外返回向量召回最高余弦分，供 weak 判断（F1）。
+
+    Returns:
+        (最终节点, 向量召回最高余弦分)
+    """
+    nodes, best_vector_score = _retrieve_core(query, top_k, doc_type, want_vector_score=True)
+    return nodes, best_vector_score or 0.0
 
 
 def build_context(nodes: list[NodeWithScore]) -> str:
@@ -281,20 +324,17 @@ def format_nodes(nodes: list[NodeWithScore]) -> str:
     return "\n".join(lines)
 
 
-def is_retrieval_weak(nodes: list[NodeWithScore]) -> bool:
+def is_retrieval_weak(best_vector_score: float) -> bool:
     """
     判断检索结果是否偏弱，用于 LangGraph 重检索分支。
 
     Args:
-        nodes: 检索节点
+        best_vector_score: 向量召回最高余弦分（F1：必须是余弦分，而非融合/重排分）
 
     Returns:
         是否需要扩大检索
     """
-    if not nodes:
-        return True
-    best_score = max((node.score or 0.0) for node in nodes)
-    return best_score < RETRIEVE_SCORE_THRESHOLD
+    return best_vector_score < RETRIEVE_SCORE_THRESHOLD
 
 
 def generate_answer(question: str, context: str) -> str:
