@@ -7,17 +7,21 @@
 """
 
 import chromadb
+import jieba
 from llama_index.core import VectorStoreIndex
 from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.schema import NodeWithScore, TextNode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
+from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.config import (
     API_KEY,
+    BM25_TOP_K,
     CHAT_BASE_URL,
     CHAT_MODEL,
     COLLECTION_NAME,
@@ -25,6 +29,7 @@ from app.config import (
     DB_PATH,
     EMBED_BASE_URL,
     EMBED_MODEL,
+    ENABLE_HYBRID,
     ENABLE_RERANK,
     LLM_MAX_TOKENS,
     LLM_TIMEOUT,
@@ -38,6 +43,7 @@ _embed_model: OpenAIEmbedding | None = None
 _llm: OpenAILike | None = None
 _index: VectorStoreIndex | None = None
 _reranker: SentenceTransformerRerank | None = None
+_bm25_retriever: BM25Retriever | None = None
 
 
 def get_embed_model() -> OpenAIEmbedding:
@@ -72,8 +78,9 @@ def get_llm() -> OpenAILike:
 
 def reset_index_cache() -> None:
     """清空索引缓存（重建 collection 后调用）。"""
-    global _index
+    global _index, _bm25_retriever
     _index = None
+    _bm25_retriever = None
 
 
 def get_chroma_client() -> chromadb.ClientAPI:
@@ -125,6 +132,40 @@ def _build_metadata_filters(doc_type: str) -> MetadataFilters | None:
     if doc_type == "all":
         return None
     return MetadataFilters(filters=[MetadataFilter(key="doc_type", value=doc_type)])
+
+
+def _jieba_tokenize(text: str) -> list[str]:
+    """中文分词器，供 BM25 使用（B2：默认英文分词对中文无效）。"""
+    return [tok for tok in jieba.lcut(text) if tok.strip()]
+
+
+def nodes_from_chroma_payload(payload: dict) -> list[TextNode]:
+    """把 chroma collection.get() 的返回映射为 TextNode（纯函数）。"""
+    ids = payload.get("ids") or []
+    docs = payload.get("documents") or []
+    metas = payload.get("metadatas") or []
+    nodes: list[TextNode] = []
+    for id_, doc, meta in zip(ids, docs, metas):
+        nodes.append(TextNode(text=doc, id_=id_, metadata=meta or {}))
+    return nodes
+
+
+def load_all_nodes() -> list[TextNode]:
+    """从 ChromaDB 重建全部节点，供 BM25 使用。"""
+    payload = get_chroma_collection().get(include=["documents", "metadatas"])
+    return nodes_from_chroma_payload(payload)
+
+
+def get_bm25_retriever() -> BM25Retriever:
+    """获取 BM25 稀疏检索单例（B2：使用 jieba 中文分词）。"""
+    global _bm25_retriever
+    if _bm25_retriever is None:
+        _bm25_retriever = BM25Retriever.from_defaults(
+            nodes=load_all_nodes(),
+            similarity_top_k=BM25_TOP_K,
+            tokenizer=_jieba_tokenize,
+        )
+    return _bm25_retriever
 
 
 def get_reranker() -> SentenceTransformerRerank | None:
@@ -182,11 +223,23 @@ def retrieve_nodes(
         raise ValueError("向量库为空，请先执行 import")
 
     candidate_k = max(top_k, RETRIEVE_CANDIDATE_K)
-    index = get_index()
-    retriever = index.as_retriever(
+    vector_retriever = get_index().as_retriever(
         similarity_top_k=candidate_k,
         filters=_build_metadata_filters(doc_type),
     )
+
+    if ENABLE_HYBRID:
+        retriever = QueryFusionRetriever(
+            [vector_retriever, get_bm25_retriever()],
+            llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
+            similarity_top_k=candidate_k,
+            num_queries=1,            # 不在此处做多查询，交给 Task 4 的改写
+            mode="reciprocal_rerank", # RRF 融合
+            use_async=False,
+        )
+    else:
+        retriever = vector_retriever
+
     nodes = retriever.retrieve(query)
     return apply_rerank(get_reranker(), query, nodes, top_n=top_k)
 

@@ -1,0 +1,71 @@
+"""Hybrid 检索的纯逻辑测试（不连真实服务）。"""
+
+import app.index as index_mod
+from llama_index.core.schema import NodeWithScore, TextNode
+
+from app.index import nodes_from_chroma_payload
+
+
+def test_nodes_from_chroma_payload_maps_fields():
+    payload = {
+        "ids": ["doc_a__0", "doc_b__1"],
+        "documents": ["内容A", "内容B"],
+        "metadatas": [{"title": "A"}, {"title": "B"}],
+    }
+    nodes = nodes_from_chroma_payload(payload)
+    assert len(nodes) == 2
+    assert nodes[0].id_ == "doc_a__0"
+    assert nodes[0].get_content() == "内容A"
+    assert nodes[1].metadata["title"] == "B"
+
+
+def test_nodes_from_chroma_payload_handles_missing_metadata():
+    payload = {"ids": ["x__0"], "documents": ["t"], "metadatas": [None]}
+    nodes = nodes_from_chroma_payload(payload)
+    assert nodes[0].metadata == {}
+
+
+def test_nodes_from_chroma_payload_empty():
+    assert nodes_from_chroma_payload({"ids": [], "documents": [], "metadatas": []}) == []
+
+
+def test_retrieve_nodes_wires_fusion_and_rerank(monkeypatch):
+    nodes = [NodeWithScore(node=TextNode(text=f"n{i}"), score=1.0 / (i + 1)) for i in range(4)]
+
+    class _Coll:
+        def count(self):
+            return 4
+
+    class _Retriever:
+        def retrieve(self, query):
+            return nodes
+
+    class _Index:
+        def as_retriever(self, **kwargs):
+            return _Retriever()
+
+    monkeypatch.setattr(index_mod, "ENABLE_HYBRID", True)
+    monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
+    monkeypatch.setattr(index_mod, "get_index", lambda: _Index())
+    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda: _Retriever())
+    monkeypatch.setattr(index_mod, "get_llm", lambda: object())
+    monkeypatch.setattr(index_mod, "get_reranker", lambda: None)
+    monkeypatch.setattr(
+        index_mod, "QueryFusionRetriever", lambda retrievers, **kwargs: _Retriever()
+    )
+
+    out = index_mod.retrieve_nodes("q", top_k=2, doc_type="all")
+    assert len(out) == 2  # 截断到 top_k
+
+
+def test_retrieve_nodes_raises_on_empty_collection(monkeypatch):
+    class _Empty:
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Empty())
+    try:
+        index_mod.retrieve_nodes("q")
+        assert False, "应抛 ValueError"
+    except ValueError:
+        pass
