@@ -9,6 +9,7 @@
 from llama_index.core.schema import TextNode
 
 from app.config import COLLECTION_NAME
+from app.graph_index import build_graph_index
 from app.index import delete_chroma_collection, get_chroma_collection, insert_text_nodes, reset_index_cache
 from app.loader import load_chunks
 
@@ -72,3 +73,16 @@ def run_import(source: str = "all", force: bool = False, upsert: bool = False) -
 
     print(f"已有 {get_chroma_collection().count()} 个 chunk，跳过。使用 --upsert 或 --force")
     return 0
+
+
+def run_graph_build(source: str = "all") -> int:
+    """从文档源抽取实体关系构建知识图谱（慢，调 LLM）。
+
+    Returns:
+        参与构建的节点数
+    """
+    records = load_chunks(_resolve_source_names(source))
+    nodes = _to_text_nodes(records)
+    build_graph_index(nodes)
+    print(f"已构建图谱：{len(nodes)} 个节点参与抽取")
+    return len(nodes)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.config import SOURCES_CONFIG_PATH
 from app.graph import run_ask
-from app.import_docs import run_import
+from app.import_docs import run_graph_build, run_import
 from app.index import format_nodes, get_status, retrieve_nodes
 from app.sources import load_source_configs
 
@@ -46,6 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("-n", type=int, default=5)
     p_ask.add_argument("--type", choices=["all", "prompt", "doc"], default="all")
 
+    p_graph = sub.add_parser("graph-build", help="构建知识图谱（GraphRAG，慢）")
+    p_graph.add_argument("--source", choices=_source_choices(), default="all")
+
     sub.add_parser("status", help="向量库状态")
     return parser
 
@@ -62,6 +65,8 @@ def main() -> None:
             print(format_nodes(nodes))
         elif args.command == "ask":
             print(run_ask(args.text, top_k=args.n, doc_type=args.type))
+        elif args.command == "graph-build":
+            run_graph_build(source=args.source)
         elif args.command == "status":
             print(get_status())
     except ValueError as exc:
