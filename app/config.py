@@ -151,3 +151,8 @@ AGENT_ANSWER_PROMPT = """基于以下证据回答问题。严格依据证据，�
 # 结构化链路追踪（JSON Lines，零依赖；默认开启）
 ENABLE_TRACE = os.getenv("ENABLE_TRACE", "true").lower() == "true"
 TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
+
+# 进程内语义缓存（自写，零依赖；默认关闭。本任务仅建模块+开关，未接入检索热路径）
+ENABLE_SEMANTIC_CACHE = os.getenv("ENABLE_SEMANTIC_CACHE", "false").lower() == "true"
+CACHE_SIM_THRESHOLD = float(os.getenv("CACHE_SIM_THRESHOLD", "0.97"))
+CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "128"))
