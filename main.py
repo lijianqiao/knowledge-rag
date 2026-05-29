@@ -13,7 +13,7 @@ from pathlib import Path
 from app.agent import run_agent
 from app.config import ENABLE_AGENT, SOURCES_CONFIG_PATH
 from app.eval import run_eval
-from app.graph import run_ask
+from app.graph import run_ask, run_ask_stream
 from app.import_docs import run_graph_build, run_import
 from app.index import format_nodes, get_status, retrieve_nodes
 from app.sources import load_source_configs
@@ -48,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("text")
     p_ask.add_argument("-n", type=int, default=5)
     p_ask.add_argument("--type", choices=["all", "prompt", "doc"], default="all")
+    p_ask.add_argument("--stream", action="store_true", help="流式增量输出（单趟检索，无重试）")
 
     p_graph = sub.add_parser("graph-build", help="构建知识图谱（GraphRAG，慢）")
     p_graph.add_argument("--source", choices=_source_choices(), default="all")
@@ -74,7 +75,12 @@ def main() -> None:
             nodes = retrieve_nodes(args.text, top_k=args.n, doc_type=args.type)
             print(format_nodes(nodes))
         elif args.command == "ask":
-            print(run_ask(args.text, top_k=args.n, doc_type=args.type))
+            if args.stream:
+                for chunk in run_ask_stream(args.text, top_k=args.n, doc_type=args.type):
+                    print(chunk, end="", flush=True)
+                print()
+            else:
+                print(run_ask(args.text, top_k=args.n, doc_type=args.type))
         elif args.command == "graph-build":
             run_graph_build(source=args.source)
         elif args.command == "agent":

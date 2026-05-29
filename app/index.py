@@ -489,6 +489,42 @@ def generate_answer(question: str, context: str) -> str:
     return str(response).strip()
 
 
+def generate_answer_stream(question: str, context: str):
+    """
+    流式生成答案：逐 token yield 增量文本。
+
+    构造与 generate_answer 相同的 prompt，调用 LLM 的 stream_complete，
+    对每个分片 yield 其 .delta。超时/连接错误转 ValueError（与 generate_answer 一致）。
+    本函数是生成器，供 CLI 增量打印。
+
+    Args:
+        question: 用户问题
+        context: 检索组装的参考资料
+
+    Yields:
+        模型回答的增量文本片段
+    """
+    llm = get_llm()
+    prompt = (
+        f"{RAG_SYSTEM_PROMPT}\n\n"
+        f"参考资料：\n{context}\n\n"
+        f"问题：{question}\n\n"
+        "请回答："
+    )
+    try:
+        for response in llm.stream_complete(prompt):
+            yield response.delta
+    except APITimeoutError as exc:
+        raise ValueError(
+            f"Chat 请求超时（>{LLM_TIMEOUT}s）。本地模型生成较慢，"
+            f"可增大 .env 中 LLM_TIMEOUT 或减小 LLM_MAX_TOKENS。详情: {exc}"
+        ) from exc
+    except (APIConnectionError, APIStatusError) as exc:
+        raise ValueError(
+            f"Chat 服务不可用 ({CHAT_BASE_URL})，请确认 llama.cpp 对话模型已启动: {exc}"
+        ) from exc
+
+
 def rewrite_query(question: str, prev_query: str) -> str:
     """LLM 改写检索查询；空输出时回退原始问题。"""
     prompt = QUERY_REWRITE_PROMPT.format(question=question, prev_query=prev_query)

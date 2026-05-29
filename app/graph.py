@@ -17,6 +17,7 @@ from app.index import (
     build_context,
     format_nodes,
     generate_answer,
+    generate_answer_stream,
     is_retrieval_weak,
     retrieve_with_diagnostics,
     rewrite_query,
@@ -42,21 +43,36 @@ class RAGState(TypedDict):
     trace_id: str
 
 
-def _retrieve(state: RAGState) -> dict:
-    """节点：按路由选 graph / vector 检索 + 组装 context。"""
-    route = classify_route(state["search_query"]) if ENABLE_GRAPH else "vector"
+def _do_retrieve(
+    search_query: str, top_k: int, doc_type: str
+) -> tuple[list[NodeWithScore], float, str, str]:
+    """按路由选 graph / vector 检索并组装 context / sources（无 trace、无重试）。
+
+    供图节点 `_retrieve` 与单趟流式 `run_ask_stream` 共用，保证两条路径检索逻辑一致。
+
+    Returns:
+        (nodes, best_vector_score, context, sources)
+    """
+    route = classify_route(search_query) if ENABLE_GRAPH else "vector"
     if route == "graph":
-        nodes = graph_retrieve(state["search_query"], top_k=state["top_k"])
+        nodes = graph_retrieve(search_query, top_k=top_k)
         best_vector_score = 1.0  # 图路径不参与余弦 weak 判断，置高分避免误触发重检索
     else:
         nodes, best_vector_score = retrieve_with_diagnostics(
-            query=state["search_query"], top_k=state["top_k"], doc_type=state["doc_type"]
+            query=search_query, top_k=top_k, doc_type=doc_type
         )
+    return nodes, best_vector_score, build_context(nodes), format_nodes(nodes)
+
+
+def _retrieve(state: RAGState) -> dict:
+    """节点：按路由选 graph / vector 检索 + 组装 context。"""
+    nodes, best_vector_score, context, sources = _do_retrieve(
+        state["search_query"], state["top_k"], state["doc_type"]
+    )
     log_event(
         state.get("trace_id", ""),
         "retrieve",
         {
-            "route": route,
             "best_vector_score": best_vector_score,
             "top_k": state["top_k"],
             "topk": [(n.metadata.get("source", "?"), round(n.score or 0.0, 4)) for n in nodes[:5]],
@@ -65,8 +81,8 @@ def _retrieve(state: RAGState) -> dict:
     return {
         "nodes": nodes,
         "best_vector_score": best_vector_score,
-        "context": build_context(nodes),
-        "sources": format_nodes(nodes),
+        "context": context,
+        "sources": sources,
     }
 
 
@@ -180,3 +196,25 @@ def run_ask(question: str, top_k: int = RETRIEVE_TOP_K, doc_type: str = "all") -
         }
     )
     return result["result"]
+
+
+def run_ask_stream(question: str, top_k: int = RETRIEVE_TOP_K, doc_type: str = "all"):
+    """
+    流式 RAG 问答：单趟检索（不走 LangGraph 重试循环）+ 逐 token yield 答案。
+
+    流式是 CLI 输出关注点，刻意与图的重试循环解耦：检索只做一次（best-effort 单趟），
+    先 yield 答案增量，答案耗尽后再 yield 末尾的参考来源块。
+
+    Args:
+        question: 用户问题
+        top_k: 检索条数
+        doc_type: 文档类型过滤
+
+    Yields:
+        答案增量片段，最后一项为「--- 参考来源 ---」块
+    """
+    trace_id = new_trace_id()
+    _, best_vector_score, context, sources = _do_retrieve(question, top_k, doc_type)
+    log_event(trace_id, "retrieve", {"best_vector_score": best_vector_score, "top_k": top_k})
+    yield from generate_answer_stream(question, context)
+    yield f"\n\n--- 参考来源 ---\n{sources}"
