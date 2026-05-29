@@ -6,12 +6,14 @@
 @Docs: LlamaIndex 索引层：Embedding、ChromaDB 向量库、检索与 context 组装
 """
 
+import bm25s
 import chromadb
 import jieba
 from llama_index.core import VectorStoreIndex
 from llama_index.core.retrievers import QueryFusionRetriever
-from llama_index.core.schema import NodeWithScore, TextNode
+from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
+from llama_index.core.vector_stores.utils import node_to_metadata_dict
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.retrievers.bm25 import BM25Retriever
@@ -135,9 +137,25 @@ def _build_metadata_filters(doc_type: str) -> MetadataFilters | None:
     return MetadataFilters(filters=[MetadataFilter(key="doc_type", value=doc_type)])
 
 
-def _jieba_tokenize(text: str) -> list[str]:
-    """中文分词器，供 BM25 使用（B2：默认英文分词对中文无效）。"""
-    return [tok for tok in jieba.lcut(text) if tok.strip()]
+# 中文 BM25 用 jieba 词级分词。BM25Retriever.from_defaults 的 tokenizer= 形参已废弃且被忽略，
+# 故走官方扩展点：自建 existing_bm25（语料经 jieba 预切分），查询端在子类 _retrieve 里同样预切分，
+# 两端统一用空白分词 token_pattern，保证一致。
+_BM25_WS_PATTERN = r"(?u)\S+"
+
+
+def _jieba_tokenize(text: str) -> str:
+    """jieba 分词后空格连接（供 bm25s 按空白再切，实现词级匹配）。
+
+    用 jieba.cut（全版本可用）而非 lcut（旧版缺失）。
+    """
+    return " ".join(tok for tok in jieba.cut(text) if tok.strip())
+
+
+class _JiebaBM25Retriever(BM25Retriever):
+    """查询端也用 jieba 预切分，与 jieba 切分的语料对齐。"""
+
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        return super()._retrieve(QueryBundle(query_str=_jieba_tokenize(query_bundle.query_str)))
 
 
 def nodes_from_chroma_payload(payload: dict) -> list[TextNode]:
@@ -157,17 +175,38 @@ def load_all_nodes() -> list[TextNode]:
     return nodes_from_chroma_payload(payload)
 
 
-def get_bm25_retriever(doc_type: str = "all") -> BM25Retriever:
-    """按 doc_type 构建并缓存 BM25（严格过滤，F3 升级；B2：jieba 中文分词）。"""
+def _build_jieba_bm25(nodes: list[TextNode], top_k: int) -> _JiebaBM25Retriever:
+    """用 jieba 预切分语料自建 bm25s 索引，包成 retriever（语料保留原文，仅打分文本被切分）。"""
+    corpus_records = [node_to_metadata_dict(n) | {"node_id": n.node_id} for n in nodes]
+    corpus_tokens = bm25s.tokenize(
+        [_jieba_tokenize(n.get_content()) for n in nodes],
+        token_pattern=_BM25_WS_PATTERN,
+        stemmer=None,  # 与查询端一致：不做英文词干还原
+    )
+    bm25 = bm25s.BM25(corpus=corpus_records)  # 检索按匹配行号返回 corpus_records[i]（原文节点）
+    bm25.index(corpus_tokens)
+    return _JiebaBM25Retriever(
+        existing_bm25=bm25,
+        similarity_top_k=top_k,
+        token_pattern=_BM25_WS_PATTERN,
+        skip_stemming=True,
+    )
+
+
+def get_bm25_retriever(doc_type: str = "all") -> _JiebaBM25Retriever | None:
+    """按 doc_type 构建并缓存 BM25（严格过滤，F3 升级；jieba 词级中文分词）。
+
+    该 doc_type 下无节点时返回 None，调用方退化为纯向量检索。
+    """
     if doc_type not in _bm25_retrievers:
         nodes = load_all_nodes()
         if doc_type != "all":
             nodes = [n for n in nodes if (n.metadata or {}).get("doc_type") == doc_type]
-        _bm25_retrievers[doc_type] = BM25Retriever.from_defaults(
-            nodes=nodes,
-            similarity_top_k=BM25_TOP_K,
-            tokenizer=_jieba_tokenize,
-        )
+        if not nodes:
+            _bm25_retrievers[doc_type] = None
+        else:
+            # k 不得超过节点数，否则 bm25s 会告警并覆盖；显式 clamp 消除告警
+            _bm25_retrievers[doc_type] = _build_jieba_bm25(nodes, min(BM25_TOP_K, len(nodes)))
     return _bm25_retrievers[doc_type]
 
 
@@ -232,17 +271,23 @@ def _retrieve_core(
         if want_vector_score:
             vector_nodes = vector_retriever.retrieve(query)
             best_vector_score = max((n.score or 0.0) for n in vector_nodes) if vector_nodes else 0.0
-        num_queries = MULTI_QUERY_NUM if ENABLE_MULTI_QUERY else 1
-        retriever = QueryFusionRetriever(
-            [vector_retriever, get_bm25_retriever(doc_type)],
-            llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
-            similarity_top_k=candidate_k,
-            num_queries=num_queries,
-            query_gen_prompt=MULTI_QUERY_PROMPT,  # F-3：中文扩展提示词（num_queries=1 时不生效，无害）
-            mode="reciprocal_rerank", # RRF 融合
-            use_async=ENABLE_MULTI_QUERY,  # 多查询时并行
-        )
-        nodes = retriever.retrieve(query)
+        bm25 = get_bm25_retriever(doc_type)
+        sub_retrievers = [vector_retriever] + ([bm25] if bm25 is not None else [])
+        if len(sub_retrievers) > 1 or ENABLE_MULTI_QUERY:
+            num_queries = MULTI_QUERY_NUM if ENABLE_MULTI_QUERY else 1
+            retriever = QueryFusionRetriever(
+                sub_retrievers,
+                llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
+                similarity_top_k=candidate_k,
+                num_queries=num_queries,
+                query_gen_prompt=MULTI_QUERY_PROMPT,  # F-3：中文扩展提示词（num_queries=1 时不生效，无害）
+                mode="reciprocal_rerank", # RRF 融合
+                use_async=ENABLE_MULTI_QUERY,  # 多查询时并行
+            )
+            nodes = retriever.retrieve(query)
+        else:
+            # 该 doc_type 无 BM25 节点且未开多查询 → 退化为纯向量
+            nodes = vector_retriever.retrieve(query)
     else:
         nodes = vector_retriever.retrieve(query)
         best_vector_score = max((n.score or 0.0) for n in nodes) if nodes else 0.0

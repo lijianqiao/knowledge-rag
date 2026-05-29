@@ -39,7 +39,7 @@ EMBED_MODEL=Qwen3-Embedding-0.6B
 
 # 对话模型（本地 llama.cpp）
 CHAT_BASE_URL=http://127.0.0.1:8081/v1
-CHAT_MODEL=Qwen3-4B-Instruct
+CHAT_MODEL=Qwen3.5-9B
 LLM_TIMEOUT=600
 LLM_MAX_TOKENS=1024
 
@@ -58,8 +58,8 @@ SOURCES_CONFIG_PATH=sources.toml
 ENABLE_RERANK=true
 RERANK_BACKEND=api                       # api | local
 RERANK_BASE_URL=http://127.0.0.1:8082
-RERANK_API_MODEL=Qwen3-Reranker-0.6B
-RERANK_MODEL=BAAI/bge-reranker-v2-m3     # 仅 RERANK_BACKEND=local 时使用
+RERANK_API_MODEL=bge-reranker-v2-m3      # 单模型 llama.cpp 会忽略该名，仅作标签
+RERANK_MODEL=BAAI/bge-reranker-v2-m3     # 仅 RERANK_BACKEND=local 时使用（需 HF 格式，非 GGUF）
 
 # Hybrid 检索（稠密 + BM25 融合）
 ENABLE_HYBRID=true
@@ -188,3 +188,31 @@ urls = ["https://example.com/runbook"]
 - 必填字段：`name` / `type` / `doc_type`；其余按类型放在同一块（filesystem 用 `root`/`glob`/`exclude`，web 用 `urls`）。
 - 分块 `chunk_id` 形如 `{doc_type}_{相对路径下划线化}__{序号}`，`--upsert` 依赖该 id 稳定。
 - filesystem 源根目录下每个一级子目录会作为 `category` 元数据。`.md` 走二级标题分块，其余格式走字符滑窗分块。
+
+## 扩展性与向量库选型（预案）
+
+> 决定要不要换"重型向量库"的是**数据量与并发**，不是公司人数。当前架构（ChromaDB 稠密 + 进程内 `bm25s`+jieba 稀疏 + reranker）对**几千人规模、低 QPS 的运维知识库足够**，无需升级。
+
+**何时才考虑升级（量化触发阈值，满足任一）**
+
+- chunk 总量 > ~100 万，或单机内存吃紧 / 启动明显变慢；
+- 持续并发 QPS > ~20–50；
+- 需要**学习式稀疏（BGE-M3）**进一步提升中文召回（ChromaDB 不支持稀疏向量 ANN）；
+- 需要多副本 / 高可用 / 在线扩容 / 快照。
+
+**升级路径优先级**
+
+1. **pgvector**（本仓库环境已有 PostgreSQL）→ 零新增服务，复用现有 Postgres 存稠密；要稀疏/BM25 可上 `VectorChord`/`pgvecto.rs`。最低摩擦。
+2. **Qdrant**（向量原生、轻量：单二进制 / Docker / 嵌入式 local 模式）→ **仅当要做 BGE-M3 学习式稀疏 hybrid 时选它**（这是它相对 Chroma 的唯一强理由：原生稀疏 + server 端融合）。
+3. **Elasticsearch/OpenSearch + IK 分词** → 要做全公司级中文全文检索平台时。
+4. **Milvus** → 千万级向量 / 分布式才考虑，最重。
+
+**Qdrant 迁移预案（真要换时照此做）**
+
+- 触发条件：决定上 BGE-M3 学习式稀疏 hybrid。只为"换个更好的稠密库"不值得迁。
+- 依赖：`qdrant-client`、`llama-index-vector-stores-qdrant`；可先用 local 模式 `QdrantClient(path=...)`（Windows 免 Docker），生产单机 Docker。
+- 改动点（集中在 `app/index.py`）：`get_chroma_*`/`get_index`（`ChromaVectorStore`→`QdrantVectorStore`）、`delete_chroma_collection`、`load_all_nodes`（`chroma.get()`→Qdrant scroll）、`get_status`；新增 `QDRANT_*` 配置；**数据需重灌**。
+- 稀疏来源：用 FastEmbed(ONNX) 出 BGE-M3/SPLADE 稀疏 —— 代价是 **~2GB 进程内模型**（与当前 llama.cpp 纯服务化相悖，需接受）。
+- 灰度与回退：加 `VECTOR_BACKEND=chroma|qdrant` 开关，保留 Chroma 路径，可回退；用同一批问题对比召回/答案质量，确认提升再全量切。
+
+**结论**：当前规模不换。要升级优先 **pgvector（复用 Postgres）**；只有为 **BGE-M3 学习式稀疏**才上 **Qdrant**；ES/Milvus 留给平台级规模。

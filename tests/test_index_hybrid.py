@@ -102,18 +102,40 @@ def test_bm25_built_per_doc_type(monkeypatch):
     monkeypatch.setattr(m, "load_all_nodes", lambda: all_nodes)
 
     captured = {}
-
-    class _FakeBM25:
-        @classmethod
-        def from_defaults(cls, nodes, **kwargs):
-            captured["nodes"] = nodes
-            return cls()
-
-    monkeypatch.setattr(m, "BM25Retriever", _FakeBM25)
+    # 拦截真实建库（不跑 bm25s/jieba），只验证按 doc_type 过滤后的节点与 clamp 的 k
+    monkeypatch.setattr(
+        m, "_build_jieba_bm25", lambda nodes, top_k: captured.update(nodes=nodes, top_k=top_k)
+    )
     m.reset_index_cache()
 
     m.get_bm25_retriever("prompt")
     assert [n.id_ for n in captured["nodes"]] == ["1"]  # 仅 prompt 类
+    assert captured["top_k"] == 1  # k clamp 到节点数（min(BM25_TOP_K, 1)）
+
+
+def test_bm25_none_when_doc_type_empty(monkeypatch):
+    import app.index as m
+    from llama_index.core.schema import TextNode
+
+    monkeypatch.setattr(m, "load_all_nodes", lambda: [TextNode(text="d", id_="2", metadata={"doc_type": "doc"})])
+    monkeypatch.setattr(m, "_build_jieba_bm25", lambda nodes, top_k: object())
+    m.reset_index_cache()
+    assert m.get_bm25_retriever("prompt") is None  # 该类型无节点 → None，调用方退化纯向量
+
+
+def test_jieba_bm25_real_word_match_and_original_text():
+    """真实 bm25s+jieba（进程内，无模型/网络）：词级命中，且召回返回原文。"""
+    import app.index as m
+    from llama_index.core.schema import TextNode
+
+    nodes = [
+        TextNode(text="订单服务内存溢出导致502", id_="1", metadata={"doc_type": "doc"}),
+        TextNode(text="Redis 缓存清理操作手册", id_="2", metadata={"doc_type": "doc"}),
+    ]
+    retriever = m._build_jieba_bm25(nodes, top_k=2)
+    res = retriever.retrieve("内存溢出怎么排查")
+    assert res[0].node.node_id == "1"  # jieba 词级命中「内存/溢出」
+    assert res[0].get_content() == "订单服务内存溢出导致502"  # 返回原文，非切分文本
 
 
 # --- F1: weak 判断用向量余弦分，与融合/重排分解耦 ---

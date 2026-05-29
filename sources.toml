@@ -1,12 +1,4 @@
 [[sources]]
-name = "prompts"
-type = "filesystem"
-doc_type = "prompt"
-root = "运维prompt库"
-glob = "**/*.md"
-exclude = ["README.md", "Prompt模板规范.md"]
-
-[[sources]]
 name = "docs"
 type = "filesystem"
 doc_type = "doc"
