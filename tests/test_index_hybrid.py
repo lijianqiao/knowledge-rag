@@ -257,3 +257,42 @@ def test_real_fusion_num_queries_1_does_not_call_llm():
     out = fusion.retrieve("hello")  # 若触发 LLM，_NoCallLLM 会抛断言
     assert len(out) >= 1
     assert all(isinstance(n, NodeWithScore) for n in out)
+
+
+# --- Phase 4D Task 4D.2: 按 source 删除 chunk ---
+
+
+def test_delete_chunks_by_sources(monkeypatch):
+    calls = []
+
+    class _Coll:
+        def delete(self, where):
+            calls.append(where)
+
+    monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
+    reset_count = {"n": 0}
+    monkeypatch.setattr(
+        index_mod, "reset_index_cache", lambda: reset_count.__setitem__("n", reset_count["n"] + 1)
+    )
+
+    index_mod.delete_chunks_by_sources(["运维文档/a.md", "运维文档/b.md"])
+    assert calls == [{"source": "运维文档/a.md"}, {"source": "运维文档/b.md"}]
+    assert reset_count["n"] == 1  # 删除完成后清缓存一次
+
+
+def test_delete_chunks_by_sources_empty_is_noop(monkeypatch):
+    calls = []
+
+    class _Coll:
+        def delete(self, where):
+            calls.append(where)
+
+    monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
+    reset_count = {"n": 0}
+    monkeypatch.setattr(
+        index_mod, "reset_index_cache", lambda: reset_count.__setitem__("n", reset_count["n"] + 1)
+    )
+
+    index_mod.delete_chunks_by_sources([])
+    assert calls == []
+    assert reset_count["n"] == 0  # 空列表不删不清缓存

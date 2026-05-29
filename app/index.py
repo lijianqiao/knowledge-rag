@@ -122,6 +122,16 @@ def delete_chroma_collection() -> bool:
     return True
 
 
+def delete_chunks_by_sources(sources: list[str]) -> None:
+    """按 source 元数据删除 chunk（增量导入清理消失的文件）。"""
+    if not sources:
+        return
+    collection = get_chroma_collection()
+    for src in sources:
+        collection.delete(where={"source": src})
+    reset_index_cache()
+
+
 def get_index() -> VectorStoreIndex:
     """
     获取 LlamaIndex 向量索引（绑定已有 ChromaDB collection）。
