@@ -161,6 +161,42 @@ def test_retrieve_with_diagnostics_returns_vector_cosine_not_rrf(monkeypatch):
     assert len(nodes) == 2  # 最终节点来自融合结果，截断到 top_k
 
 
+# --- Phase 2 Task 2.3: 多查询扩展开关控制 num_queries ---
+
+
+def test_multi_query_sets_num_queries(monkeypatch):
+    import app.index as m
+    from llama_index.core.schema import NodeWithScore, TextNode
+
+    captured = {}
+
+    class _Coll:
+        def count(self): return 1
+
+    class _Retriever:
+        def retrieve(self, q): return [NodeWithScore(node=TextNode(text="x"), score=0.5)]
+
+    class _Index:
+        def as_retriever(self, **k): return _Retriever()
+
+    def _fake_fusion(retrievers, **kwargs):
+        captured.update(kwargs)
+        return _Retriever()
+
+    monkeypatch.setattr(m, "ENABLE_HYBRID", True)
+    monkeypatch.setattr(m, "ENABLE_MULTI_QUERY", True)
+    monkeypatch.setattr(m, "MULTI_QUERY_NUM", 4)
+    monkeypatch.setattr(m, "get_chroma_collection", lambda: _Coll())
+    monkeypatch.setattr(m, "get_index", lambda: _Index())
+    monkeypatch.setattr(m, "get_bm25_retriever", lambda dt="all": _Retriever())
+    monkeypatch.setattr(m, "get_llm", lambda: object())
+    monkeypatch.setattr(m, "get_reranker", lambda: None)
+    monkeypatch.setattr(m, "QueryFusionRetriever", _fake_fusion)
+
+    m.retrieve_nodes("q", top_k=2, doc_type="all")
+    assert captured["num_queries"] == 4
+
+
 # --- F2: 真实 QueryFusionRetriever 在 num_queries=1 下离线可跑、且不调用 LLM ---
 
 

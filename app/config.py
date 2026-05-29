@@ -48,6 +48,10 @@ BM25_TOP_K = int(os.getenv("BM25_TOP_K", "30"))
 # Query Rewriting（LLM 改写检索查询，替换弱重试）
 ENABLE_QUERY_REWRITE = os.getenv("ENABLE_QUERY_REWRITE", "true").lower() == "true"
 
+# Multi-Query 扩展（首检索时用 LLM 把原问题扩展成多条变体并行检索后融合）
+ENABLE_MULTI_QUERY = os.getenv("ENABLE_MULTI_QUERY", "false").lower() == "true"
+MULTI_QUERY_NUM = int(os.getenv("MULTI_QUERY_NUM", "3"))
+
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
@@ -68,3 +72,10 @@ QUERY_REWRITE_PROMPT = """你是检索查询优化助手。下面的查询召回
 原始问题：{question}
 上次查询：{prev_query}
 改写后的查询："""
+
+MULTI_QUERY_PROMPT = (
+    "你是检索查询扩展助手。请基于下面的原始问题，生成 {num_queries} 个语义相近"
+    "但表述不同的中文检索查询，覆盖同义词与相关术语。每行一个，不要编号、不要解释。\n"
+    "原始问题：{query}\n"
+    "查询："
+)

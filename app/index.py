@@ -29,8 +29,11 @@ from app.config import (
     EMBED_BASE_URL,
     EMBED_MODEL,
     ENABLE_HYBRID,
+    ENABLE_MULTI_QUERY,
     LLM_MAX_TOKENS,
     LLM_TIMEOUT,
+    MULTI_QUERY_NUM,
+    MULTI_QUERY_PROMPT,
     QUERY_REWRITE_PROMPT,
     RAG_SYSTEM_PROMPT,
     RETRIEVE_CANDIDATE_K,
@@ -229,13 +232,15 @@ def _retrieve_core(
         if want_vector_score:
             vector_nodes = vector_retriever.retrieve(query)
             best_vector_score = max((n.score or 0.0) for n in vector_nodes) if vector_nodes else 0.0
+        num_queries = MULTI_QUERY_NUM if ENABLE_MULTI_QUERY else 1
         retriever = QueryFusionRetriever(
             [vector_retriever, get_bm25_retriever(doc_type)],
             llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
             similarity_top_k=candidate_k,
-            num_queries=1,            # 不在此处做多查询，交给改写节点
+            num_queries=num_queries,
+            query_gen_prompt=MULTI_QUERY_PROMPT,  # F-3：中文扩展提示词（num_queries=1 时不生效，无害）
             mode="reciprocal_rerank", # RRF 融合
-            use_async=False,
+            use_async=ENABLE_MULTI_QUERY,  # 多查询时并行
         )
         nodes = retriever.retrieve(query)
     else:
