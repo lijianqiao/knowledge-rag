@@ -24,9 +24,10 @@ graph_store/
 # docs
 docs/
 
-# claude
+# AGENTS
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # llama.cpp
 llama.cpp/
