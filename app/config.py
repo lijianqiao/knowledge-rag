@@ -7,30 +7,10 @@
 """
 
 import os
-from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
-
-
-@dataclass(frozen=True)
-class DocumentSource:
-    """
-    文档源配置。
-
-    Attributes:
-        key: 源标识
-        root: 文档根目录
-        doc_type: 文档类型标签
-        skip_files: 跳过的文件名
-    """
-
-    key: str
-    root: Path
-    doc_type: str
-    skip_files: frozenset[str]
 
 
 DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
@@ -68,21 +48,6 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
 SOURCES_CONFIG_PATH = os.getenv("SOURCES_CONFIG_PATH", "sources.toml")
-
-DOCUMENT_SOURCES: dict[str, DocumentSource] = {
-    "prompts": DocumentSource(
-        key="prompts",
-        root=Path("运维prompt库"),
-        doc_type="prompt",
-        skip_files=frozenset({"README.md", "Prompt模板规范.md"}),
-    ),
-    "docs": DocumentSource(
-        key="docs",
-        root=Path("运维文档"),
-        doc_type="doc",
-        skip_files=frozenset({"README.md"}),
-    ),
-}
 
 RAG_SYSTEM_PROMPT = """你是企业运维知识库助手。请严格基于提供的参考资料回答问题。
 

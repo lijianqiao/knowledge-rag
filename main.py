@@ -8,10 +8,22 @@
 
 import argparse
 import sys
+from pathlib import Path
 
+from app.config import SOURCES_CONFIG_PATH
 from app.graph import run_ask
 from app.import_docs import run_import
 from app.index import format_nodes, get_status, retrieve_nodes
+from app.sources import load_source_configs
+
+
+def _source_choices() -> list[str]:
+    """从 sources.toml 读取可用源名供 --source；读取失败时退回仅 all。"""
+    try:
+        names = [c.name for c in load_source_configs(Path(SOURCES_CONFIG_PATH))]
+    except ValueError:
+        names = []
+    return ["all", *names]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_import = sub.add_parser("import", help="导入文档（分块向量化）")
-    p_import.add_argument("--source", choices=["all", "prompts", "docs"], default="all")
+    p_import.add_argument("--source", choices=_source_choices(), default="all")
     p_import.add_argument("--force", action="store_true", help="重建 collection")
     p_import.add_argument("--upsert", action="store_true", help="更新已有分块")
 

@@ -8,9 +8,16 @@
 
 from llama_index.core.schema import TextNode
 
-from app.config import COLLECTION_NAME, DOCUMENT_SOURCES
+from app.config import COLLECTION_NAME
 from app.index import delete_chroma_collection, get_chroma_collection, insert_text_nodes, reset_index_cache
 from app.loader import load_chunks
+
+
+def _resolve_source_names(source: str) -> list[str]:
+    """把 CLI --source 解析为 load_chunks 的源名列表（"all" → 空列表 = 全部）。"""
+    if source == "all":
+        return []
+    return [source]
 
 
 def _to_text_nodes(records) -> list[TextNode]:
@@ -33,7 +40,7 @@ def run_import(source: str = "all", force: bool = False, upsert: bool = False) -
     导入 Markdown 分块到向量库。
 
     Args:
-        source: all / prompts / docs
+        source: "all" 或 sources.toml 中的源名
         force: 删除 collection 后全量重建
         upsert: 更新已有分块（LlamaIndex insert 覆盖同 id）
 
@@ -43,8 +50,7 @@ def run_import(source: str = "all", force: bool = False, upsert: bool = False) -
     if force and upsert:
         raise ValueError("force 与 upsert 不能同时使用")
 
-    keys = list(DOCUMENT_SOURCES.keys()) if source == "all" else [source]
-    records = load_chunks(keys)
+    records = load_chunks(_resolve_source_names(source))
     nodes = _to_text_nodes(records)
 
     if force:
