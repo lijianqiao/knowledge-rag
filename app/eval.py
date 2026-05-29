@@ -65,3 +65,65 @@ def judge_relevancy(answer: str, question: str) -> float:
         return _score(str(get_llm().complete(EVAL_RELEVANCY_PROMPT.format(answer=answer, question=question))))
     except Exception:
         return 0.0
+
+
+def _default_ask(question: str) -> tuple[str, list[str], str]:
+    """默认问答 seam：真实检索 + 生成（仅 run_eval 实际调用时触发，不在 import/测试时执行）。"""
+    from app.config import RETRIEVE_TOP_K
+    from app.index import build_context, generate_answer, retrieve_nodes
+
+    nodes = retrieve_nodes(question, top_k=RETRIEVE_TOP_K)
+    context = build_context(nodes)
+    answer = generate_answer(question, context)
+    sources = [n.metadata.get("source", "") for n in nodes]
+    return answer, sources, context
+
+
+def run_eval(
+    goldset_path: Path,
+    ask_fn=None,
+    faithfulness_fn=None,
+    relevancy_fn=None,
+) -> str:
+    """跑评测集，返回人类可读报告字符串。
+
+    Args:
+        goldset_path: 评测集 JSON 路径（[{question, expected_source_substrings, ...}]）。
+        ask_fn: question -> (answer, sources, context)，默认走真实检索+生成。
+        faithfulness_fn: (answer, context) -> float，默认 judge_faithfulness。
+        relevancy_fn: (answer, question) -> float，默认 judge_relevancy。
+    """
+    ask = ask_fn or _default_ask
+    judge_f = faithfulness_fn or judge_faithfulness
+    judge_r = relevancy_fn or judge_relevancy
+
+    goldset = load_goldset(goldset_path)
+    rows: list[dict] = []
+    for item in goldset:
+        question = item["question"]
+        answer, sources, context = ask(question)
+        recall = context_recall(sources, item.get("expected_source_substrings", []))
+        faithfulness = judge_f(answer, context)
+        relevancy = judge_r(answer, question)
+        rows.append(
+            {
+                "question": question,
+                "recall": recall,
+                "faithfulness": faithfulness,
+                "relevancy": relevancy,
+            }
+        )
+
+    agg = aggregate(rows)
+    lines = [f"评测集: {goldset_path}（共 {len(rows)} 条）", ""]
+    for r in rows:
+        lines.append(
+            f"- {r['question']}  recall={r['recall']:.2f} "
+            f"faithfulness={r['faithfulness']:.2f} relevancy={r['relevancy']:.2f}"
+        )
+    lines += [
+        "",
+        "--- 聚合 ---",
+        f"recall={agg['recall']} faithfulness={agg['faithfulness']} relevancy={agg['relevancy']}",
+    ]
+    return "\n".join(lines)

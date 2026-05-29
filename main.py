@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.agent import run_agent
 from app.config import ENABLE_AGENT, SOURCES_CONFIG_PATH
+from app.eval import run_eval
 from app.graph import run_ask
 from app.import_docs import run_graph_build, run_import
 from app.index import format_nodes, get_status, retrieve_nodes
@@ -54,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("text")
     p_agent.add_argument("-n", type=int, default=5)
 
+    p_eval = sub.add_parser("eval", help="跑评测集（recall + LLM-as-judge faithfulness/relevancy）")
+    p_eval.add_argument("--set", dest="goldset", default="eval/goldset.example.json", help="评测集 JSON 路径")
+
     sub.add_parser("status", help="向量库状态")
     return parser
 
@@ -76,6 +80,8 @@ def main() -> None:
             if not ENABLE_AGENT:
                 raise ValueError("跨文档推理 Agent 未启用，请设 ENABLE_AGENT=true")
             print(run_agent(args.text, top_k=args.n))
+        elif args.command == "eval":
+            print(run_eval(Path(args.goldset)))
         elif args.command == "status":
             print(get_status())
     except ValueError as exc:
