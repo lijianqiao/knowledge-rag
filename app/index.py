@@ -44,7 +44,7 @@ _embed_model: OpenAIEmbedding | None = None
 _llm: OpenAILike | None = None
 _index: VectorStoreIndex | None = None
 _reranker: SentenceTransformerRerank | None = None
-_bm25_retriever: BM25Retriever | None = None
+_bm25_retrievers: dict[str, BM25Retriever] = {}
 
 
 def get_embed_model() -> OpenAIEmbedding:
@@ -79,9 +79,9 @@ def get_llm() -> OpenAILike:
 
 def reset_index_cache() -> None:
     """清空索引缓存（重建 collection 后调用）。"""
-    global _index, _bm25_retriever
+    global _index, _bm25_retrievers
     _index = None
-    _bm25_retriever = None
+    _bm25_retrievers = {}
 
 
 def get_chroma_client() -> chromadb.ClientAPI:
@@ -157,16 +157,18 @@ def load_all_nodes() -> list[TextNode]:
     return nodes_from_chroma_payload(payload)
 
 
-def get_bm25_retriever() -> BM25Retriever:
-    """获取 BM25 稀疏检索单例（B2：使用 jieba 中文分词）。"""
-    global _bm25_retriever
-    if _bm25_retriever is None:
-        _bm25_retriever = BM25Retriever.from_defaults(
-            nodes=load_all_nodes(),
+def get_bm25_retriever(doc_type: str = "all") -> BM25Retriever:
+    """按 doc_type 构建并缓存 BM25（严格过滤，F3 升级；B2：jieba 中文分词）。"""
+    if doc_type not in _bm25_retrievers:
+        nodes = load_all_nodes()
+        if doc_type != "all":
+            nodes = [n for n in nodes if (n.metadata or {}).get("doc_type") == doc_type]
+        _bm25_retrievers[doc_type] = BM25Retriever.from_defaults(
+            nodes=nodes,
             similarity_top_k=BM25_TOP_K,
             tokenizer=_jieba_tokenize,
         )
-    return _bm25_retriever
+    return _bm25_retrievers[doc_type]
 
 
 def get_reranker() -> SentenceTransformerRerank | None:
@@ -246,7 +248,7 @@ def _retrieve_core(
             vector_nodes = vector_retriever.retrieve(query)
             best_vector_score = max((n.score or 0.0) for n in vector_nodes) if vector_nodes else 0.0
         retriever = QueryFusionRetriever(
-            [vector_retriever, get_bm25_retriever()],
+            [vector_retriever, get_bm25_retriever(doc_type)],
             llm=get_llm(),            # S2：显式传 LLM，避免回退到未配置的 Settings.llm
             similarity_top_k=candidate_k,
             num_queries=1,            # 不在此处做多查询，交给改写节点

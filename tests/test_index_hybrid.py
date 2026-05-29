@@ -47,7 +47,7 @@ def test_retrieve_nodes_wires_fusion_and_rerank(monkeypatch):
     monkeypatch.setattr(index_mod, "ENABLE_HYBRID", True)
     monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
     monkeypatch.setattr(index_mod, "get_index", lambda: _Index())
-    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda: _Retriever())
+    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda dt="all": _Retriever())
     monkeypatch.setattr(index_mod, "get_llm", lambda: object())
     monkeypatch.setattr(index_mod, "get_reranker", lambda: None)
     monkeypatch.setattr(
@@ -88,6 +88,34 @@ def test_filter_by_doc_type_all_is_passthrough():
     assert index_mod._filter_by_doc_type(nodes, "all") == nodes
 
 
+# --- Phase 2 Task 2.1: per-doc_type BM25 严格过滤 ---
+
+
+def test_bm25_built_per_doc_type(monkeypatch):
+    import app.index as m
+    from llama_index.core.schema import TextNode
+
+    all_nodes = [
+        TextNode(text="p", id_="1", metadata={"doc_type": "prompt"}),
+        TextNode(text="d", id_="2", metadata={"doc_type": "doc"}),
+    ]
+    monkeypatch.setattr(m, "load_all_nodes", lambda: all_nodes)
+
+    captured = {}
+
+    class _FakeBM25:
+        @classmethod
+        def from_defaults(cls, nodes, **kwargs):
+            captured["nodes"] = nodes
+            return cls()
+
+    monkeypatch.setattr(m, "BM25Retriever", _FakeBM25)
+    m.reset_index_cache()
+
+    m.get_bm25_retriever("prompt")
+    assert [n.id_ for n in captured["nodes"]] == ["1"]  # 仅 prompt 类
+
+
 # --- F1: weak 判断用向量余弦分，与融合/重排分解耦 ---
 
 
@@ -123,7 +151,7 @@ def test_retrieve_with_diagnostics_returns_vector_cosine_not_rrf(monkeypatch):
     monkeypatch.setattr(index_mod, "ENABLE_HYBRID", True)
     monkeypatch.setattr(index_mod, "get_chroma_collection", lambda: _Coll())
     monkeypatch.setattr(index_mod, "get_index", lambda: _Index())
-    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda: object())
+    monkeypatch.setattr(index_mod, "get_bm25_retriever", lambda dt="all": object())
     monkeypatch.setattr(index_mod, "get_llm", lambda: object())
     monkeypatch.setattr(index_mod, "get_reranker", lambda: None)
     monkeypatch.setattr(index_mod, "QueryFusionRetriever", lambda retrievers, **kwargs: _Fusion())
