@@ -1,0 +1,28 @@
+# 版本控制 / IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Python 缓存与虚拟环境（镜像内由 uv 重建）
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# 运行时产物（不入镜像）
+chroma_db/
+graph_store/
+logs/
+.rag_manifest.json
+
+# 文档/计划/测试（运行时不需要）
+docs/
+tests/
+
+# 本地环境与密钥
+.env
+
+# 知识库源文档（运行时挂载或另行注入，不烤进镜像）
+运维prompt库/
+运维文档/
