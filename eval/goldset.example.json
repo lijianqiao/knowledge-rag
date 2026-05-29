@@ -1,0 +1,4 @@
+[
+  {"question": "订单服务 502 怎么排查", "expected_source_substrings": ["502", "订单"]},
+  {"question": "Redis 内存溢出如何处理", "expected_source_substrings": ["redis", "内存"]}
+]
