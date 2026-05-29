@@ -12,6 +12,9 @@
 - **可插拔 Reranker**：默认走 HTTP rerank API（免本地大模型下载），可切回本地 cross-encoder。
 - **多查询扩展**：可选用 LLM 把原问题扩展成多条变体并行检索后融合。
 - **类型过滤**：按 `prompt` / `doc` 文档类型过滤检索范围。
+- **GraphRAG（知识图谱检索）**：可选用本地 LLM 从文档抽取实体关系建知识图谱，按子图召回回答关系 / 影响链 / 根因传播类问题。
+- **问题类型路由**：`ask` 按问题类型自动在图检索与向量检索之间选通道，误判或图谱未构建时安全回退向量检索。
+- **跨文档推理 Agent**：显式 plan→act→reflect 多步循环（LangGraph，非原生 function-calling），跨文档收集证据后作答。
 
 ## 技术栈
 
@@ -66,6 +69,16 @@ BM25_TOP_K=30
 ENABLE_QUERY_REWRITE=true
 ENABLE_MULTI_QUERY=false
 MULTI_QUERY_NUM=3
+
+# GraphRAG（默认关闭：需先 graph-build 构建图谱）
+ENABLE_GRAPH=false
+GRAPH_PERSIST_DIR=./graph_store
+GRAPH_RETRIEVE_TOP_K=8
+GRAPH_MAX_PATHS_PER_CHUNK=10
+
+# 跨文档推理 Agent（默认关闭）
+ENABLE_AGENT=false
+MAX_AGENT_STEPS=4
 ```
 
 Reranker 默认后端为 `api`，需在 `RERANK_BASE_URL` 处提供 TEI/Jina 风格的 `/rerank` HTTP 服务；设 `RERANK_BACKEND=local` 则改用本地 cross-encoder（首次使用会下载 `BAAI/bge-reranker-v2-m3`，约 2.27GB）。离线且无 rerank 服务时设 `ENABLE_RERANK=false`。`ENABLE_RERANK`/`ENABLE_HYBRID`/`ENABLE_QUERY_REWRITE`/`ENABLE_MULTI_QUERY` 全设 `false` 即退回纯稠密 top_k 旧行为。
@@ -85,11 +98,18 @@ uv run python main.py query "如何重启服务" -n 5 --type all
 # RAG 问答（调用 LLM）
 uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
 
+# 构建知识图谱（GraphRAG，慢，需本地 LLM；与向量 import 解耦）
+uv run python main.py graph-build                 # 从全部源抽取实体关系建图
+uv run python main.py graph-build --source docs   # 仅从某一源构建（源名取自 sources.toml）
+
+# 跨文档推理问答（多步 Agent，调用 LLM）
+uv run python main.py agent "订单故障会牵连哪些服务" -n 6
+
 # 查看向量库状态
 uv run python main.py status
 ```
 
-`--type` 可选 `all` / `prompt` / `doc`；`-n` 指定返回条数。
+`--type` 可选 `all` / `prompt` / `doc`；`-n` 指定返回条数（`agent` 的 `-n` 为每步检索条数）。
 
 ## 问答流程
 
@@ -104,10 +124,27 @@ uv run python main.py status
 
 重检索由 `RETRIEVE_SCORE_THRESHOLD`（召回最高分阈值）与 `MAX_RETRIEVE_RETRIES`（最大重试次数）控制。
 
+## GraphRAG 与 Agent
+
+GraphRAG 与向量检索是**两套解耦的子系统**，默认全部关闭（`ENABLE_GRAPH`/`ENABLE_AGENT` 默认 `false`，全关时行为与纯向量检索一致）。
+
+- **先 `import` 再 `graph-build`**：向量库由 `import` 构建，知识图谱由 `graph-build` 单独构建，两者独立、各自执行。`graph-build` 用本地 LLM 从文档抽取实体关系建图（运维领域 schema：服务 / 组件 / 故障 / 根因 等），过程慢、通常一次性构建，故不挂在 `import` 上以免拖慢导入。图谱产物写入 `GRAPH_PERSIST_DIR`（默认 `./graph_store`，已在 `.gitignore`）。
+- **`ask` 自动路由**：设 `ENABLE_GRAPH=true` 后，`ask` 会按问题类型自动在图检索（关系 / 影响链 / 根因传播 / 跨文档全局关联）与向量检索（单点事实 / 操作步骤 / 定义）之间选通道。路由分类不确定、LLM 出错，或图谱尚未构建（`GRAPH_PERSIST_DIR` 缺失 / 为空）时，一律安全回退到向量检索，不会崩。
+- **`agent` 独立多步入口**：跨文档推理 Agent 是独立子命令，用显式 plan→act→reflect 循环（不依赖本地小模型不可靠的原生 function-calling）多步收集证据后作答，步数受 `MAX_AGENT_STEPS`（默认 4）约束，每步可调向量或图检索工具。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `ENABLE_GRAPH` | `false` | 开启后 `ask` 启用问题类型路由（图 / 向量） |
+| `GRAPH_PERSIST_DIR` | `./graph_store` | 图谱持久化目录（整 StorageContext） |
+| `GRAPH_RETRIEVE_TOP_K` | `8` | 图检索默认召回条数 |
+| `GRAPH_MAX_PATHS_PER_CHUNK` | `10` | 每个 chunk 抽取的最大三元组数 |
+| `ENABLE_AGENT` | `false` | 跨文档推理 Agent 开关 |
+| `MAX_AGENT_STEPS` | `4` | Agent 最大决策步数 |
+
 ## 项目结构
 
 ```
-main.py              CLI 入口：import / query / ask / status
+main.py              CLI 入口：import / query / ask / graph-build / agent / status
 sources.toml         声明式数据源清单（filesystem / web）
 app/
   config.py          配置（全部来自环境变量）
@@ -116,8 +153,12 @@ app/
   loader.py          按格式分块（md 走标题分块，其余走滑窗），经连接器加载
   rerankers.py       可插拔 Reranker：api（HTTP）/ local（cross-encoder）
   index.py           LlamaIndex + ChromaDB：Embedding、检索、context 组装、答案生成
-  graph.py           LangGraph RAG 工作流
-  import_docs.py     分块 → TextNode → 写入向量库
+  graph.py           LangGraph RAG 工作流（含问题类型路由接入）
+  import_docs.py     分块 → TextNode → 写入向量库 / 构建知识图谱
+  graph_store.py     图谱持久化目录存在性判定
+  graph_index.py     GraphRAG：PropertyGraphIndex 构建与图检索
+  router.py          检索路由：按问题类型选 graph / vector 通道
+  agent.py           跨文档推理 Agent（LangGraph plan→act→reflect 循环）
 运维prompt库/         prompt 文档源（doc_type=prompt）
 运维文档/             运维文档源（doc_type=doc）
 ```
