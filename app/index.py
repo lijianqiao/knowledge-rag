@@ -14,7 +14,7 @@ import jieba
 from llama_index.core import VectorStoreIndex
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
-from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
+from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.core.vector_stores.utils import node_to_metadata_dict
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
@@ -151,11 +151,37 @@ def get_index() -> VectorStoreIndex:
     return _index
 
 
-def _build_metadata_filters(doc_type: str) -> MetadataFilters | None:
-    """构建文档类型过滤条件。"""
-    if doc_type == "all":
+def build_access_filters(
+    doc_type: str,
+    allowed_sources: list[str] | None,
+) -> MetadataFilters | None:
+    """构建向量通道的元数据过滤条件（应用层 RBAC 钩子）。
+
+    Chroma 无原生 RBAC：上层按 user→allowed_sources 把可见 source 白名单传入，
+    与 doc_type 叠加为 Chroma metadata 过滤。无任何限制时返回 None（行为不变）。
+
+    Args:
+        doc_type: 文档类型；"all" 表示不限类型
+        allowed_sources: 允许访问的 source 白名单；None 表示不限来源
+
+    Returns:
+        叠加后的 MetadataFilters；无过滤项时为 None
+    """
+    filters: list[MetadataFilter] = []
+    if doc_type != "all":
+        filters.append(MetadataFilter(key="doc_type", value=doc_type))
+    if allowed_sources:
+        filters.append(
+            MetadataFilter(key="source", value=allowed_sources, operator=FilterOperator.IN)
+        )
+    if not filters:
         return None
-    return MetadataFilters(filters=[MetadataFilter(key="doc_type", value=doc_type)])
+    return MetadataFilters(filters=filters)
+
+
+def _build_metadata_filters(doc_type: str) -> MetadataFilters | None:
+    """构建文档类型过滤条件（build_access_filters 的无来源限制特例）。"""
+    return build_access_filters(doc_type, None)
 
 
 # 中文 BM25 用 jieba 词级分词。BM25Retriever.from_defaults 的 tokenizer= 形参已废弃且被忽略，
