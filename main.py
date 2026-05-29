@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--source", choices=_source_choices(), default="all")
     p_import.add_argument("--force", action="store_true", help="重建 collection")
     p_import.add_argument("--upsert", action="store_true", help="更新已有分块")
+    p_import.add_argument("--incremental", action="store_true", help="按内容 hash 清单增量导入（仅重导变更、清理消失文件）")
 
     p_query = sub.add_parser("query", help="调试检索（LlamaIndex → ChromaDB）")
     p_query.add_argument("text")
@@ -68,7 +69,7 @@ def main() -> None:
 
     try:
         if args.command == "import":
-            run_import(source=args.source, force=args.force, upsert=args.upsert)
+            run_import(source=args.source, force=args.force, upsert=args.upsert, incremental=args.incremental)
         elif args.command == "query":
             nodes = retrieve_nodes(args.text, top_k=args.n, doc_type=args.type)
             print(format_nodes(nodes))

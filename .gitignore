@@ -36,3 +36,6 @@ llama.cpp/
 .cache/
 .pytest_cache/
 
+# incremental import manifest
+.rag_manifest.json
+

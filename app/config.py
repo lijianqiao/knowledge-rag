@@ -71,6 +71,8 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
 SOURCES_CONFIG_PATH = os.getenv("SOURCES_CONFIG_PATH", "sources.toml")
 
+MANIFEST_PATH = os.getenv("MANIFEST_PATH", "./.rag_manifest.json")
+
 RAG_SYSTEM_PROMPT = """你是企业运维知识库助手。请严格基于提供的参考资料回答问题。
 
 要求：
