@@ -127,12 +127,3 @@ def load_chunks(source_names: list[str]) -> list[ChunkRecord]:
     if not records:
         raise ValueError("未找到可导入文档，请检查 sources.toml 的 root/urls")
     return records
-
-
-def to_batches(records: list[ChunkRecord]) -> tuple[list[str], list[str], list[dict[str, str | int]]]:
-    """转为 ChromaDB 写入批次。"""
-    return (
-        [r.chunk_id for r in records],
-        [r.text for r in records],
-        [r.metadata for r in records],
-    )

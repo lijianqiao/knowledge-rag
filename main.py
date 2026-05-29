@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from app.agent import run_agent
-from app.config import SOURCES_CONFIG_PATH
+from app.config import ENABLE_AGENT, SOURCES_CONFIG_PATH
 from app.graph import run_ask
 from app.import_docs import run_graph_build, run_import
 from app.index import format_nodes, get_status, retrieve_nodes
@@ -73,6 +73,8 @@ def main() -> None:
         elif args.command == "graph-build":
             run_graph_build(source=args.source)
         elif args.command == "agent":
+            if not ENABLE_AGENT:
+                raise ValueError("跨文档推理 Agent 未启用，请设 ENABLE_AGENT=true")
             print(run_agent(args.text, top_k=args.n))
         elif args.command == "status":
             print(get_status())

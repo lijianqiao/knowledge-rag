@@ -14,8 +14,6 @@ def _install_warning_filters() -> None:
     """注册第三方库的弃用告警过滤器（库代码不可改，只能定向屏蔽）。"""
     # jieba 内部 import pkg_resources，触发 setuptools 弃用告警
     warnings.filterwarnings("ignore", message="pkg_resources is deprecated.*", category=UserWarning)
-    # bm25 tokenizer 参数弃用提示：中文必须 jieba 分词，暂保留该参数
-    warnings.filterwarnings("ignore", message=".*tokenizer parameter is deprecated.*")
 
 
 _install_warning_filters()
