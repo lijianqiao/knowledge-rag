@@ -22,6 +22,7 @@ from app.index import (
     rewrite_query,
 )
 from app.router import classify_route
+from app.trace import log_event, new_trace_id
 
 
 class RAGState(TypedDict):
@@ -38,6 +39,7 @@ class RAGState(TypedDict):
     answer: str
     sources: str
     result: str
+    trace_id: str
 
 
 def _retrieve(state: RAGState) -> dict:
@@ -50,6 +52,16 @@ def _retrieve(state: RAGState) -> dict:
         nodes, best_vector_score = retrieve_with_diagnostics(
             query=state["search_query"], top_k=state["top_k"], doc_type=state["doc_type"]
         )
+    log_event(
+        state.get("trace_id", ""),
+        "retrieve",
+        {
+            "route": route,
+            "best_vector_score": best_vector_score,
+            "top_k": state["top_k"],
+            "topk": [(n.metadata.get("source", "?"), round(n.score or 0.0, 4)) for n in nodes[:5]],
+        },
+    )
     return {
         "nodes": nodes,
         "best_vector_score": best_vector_score,
@@ -61,6 +73,7 @@ def _retrieve(state: RAGState) -> dict:
 def _generate(state: RAGState) -> dict:
     """节点：LLM 生成答案。"""
     answer = generate_answer(state["question"], state["context"])
+    log_event(state.get("trace_id", ""), "answer", {"len": len(answer)})
     return {"answer": answer}
 
 
@@ -75,6 +88,11 @@ def _prepare_retry(state: RAGState) -> dict:
         new_query = rewrite_query(state["question"], state["search_query"])
     else:
         new_query = state["question"]
+    log_event(
+        state.get("trace_id", ""),
+        "rewrite",
+        {"from": state["search_query"], "to": new_query, "retry": state["retry_count"] + 1},
+    )
     return {
         "retry_count": state["retry_count"] + 1,
         "top_k": state["top_k"] + 3,
@@ -144,6 +162,7 @@ def run_ask(question: str, top_k: int = RETRIEVE_TOP_K, doc_type: str = "all") -
         答案与参考来源
     """
     graph = get_rag_graph()
+    trace_id = new_trace_id()
     result = graph.invoke(
         {
             "question": question,
@@ -157,6 +176,7 @@ def run_ask(question: str, top_k: int = RETRIEVE_TOP_K, doc_type: str = "all") -
             "answer": "",
             "sources": "",
             "result": "",
+            "trace_id": trace_id,
         }
     )
     return result["result"]

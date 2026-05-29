@@ -9,6 +9,7 @@ from llama_index.core.schema import NodeWithScore
 from app.config import AGENT_ANSWER_PROMPT, AGENT_DECIDE_PROMPT, MAX_AGENT_STEPS
 from app.graph_index import graph_retrieve
 from app.index import build_context, format_nodes, get_llm, retrieve_nodes
+from app.trace import log_event, new_trace_id
 
 
 class AgentState(TypedDict):
@@ -18,6 +19,7 @@ class AgentState(TypedDict):
     decision: dict
     evidence: list[NodeWithScore]
     answer: str
+    trace_id: str
 
 
 def _parse_decision(text: str) -> dict:
@@ -41,8 +43,11 @@ def _decide(state: AgentState) -> dict:
     try:
         raw = str(get_llm().complete(prompt))
     except Exception:
+        log_event(state.get("trace_id", ""), "decide", {"step": state["step"] + 1, "action": "answer"})
         return {"decision": {"action": "answer"}, "step": state["step"] + 1}
-    return {"decision": _parse_decision(raw), "step": state["step"] + 1}
+    decision = _parse_decision(raw)
+    log_event(state.get("trace_id", ""), "decide", {"step": state["step"] + 1, "action": decision.get("action")})
+    return {"decision": decision, "step": state["step"] + 1}
 
 
 def _act(state: AgentState) -> dict:
@@ -52,6 +57,11 @@ def _act(state: AgentState) -> dict:
     nodes = graph_retrieve(query, top_k=top_k) if d.get("tool") == "graph" else retrieve_nodes(query, top_k=top_k)
     seen = {n.node.node_id for n in state["evidence"]}
     merged = list(state["evidence"]) + [n for n in nodes if n.node.node_id not in seen]
+    log_event(
+        state.get("trace_id", ""),
+        "act",
+        {"tool": d.get("tool"), "query": query, "evidence_count": len(merged)},
+    )
     return {"evidence": merged}
 
 
@@ -61,6 +71,7 @@ def _answer(state: AgentState) -> dict:
         ans = str(get_llm().complete(prompt)).strip()
     except Exception as exc:
         raise ValueError(f"Agent 生成答案失败: {exc}") from exc
+    log_event(state.get("trace_id", ""), "answer", {"len": len(ans)})
     return {"answer": ans}
 
 
@@ -95,6 +106,14 @@ def get_agent_graph():
 def run_agent(question: str, top_k: int = 5) -> str:
     """执行跨文档推理 Agent，返回答案 + 引用来源。"""
     result = get_agent_graph().invoke(
-        {"question": question, "step": 0, "decision": {}, "evidence": [], "answer": "", "top_k": top_k}
+        {
+            "question": question,
+            "step": 0,
+            "decision": {},
+            "evidence": [],
+            "answer": "",
+            "top_k": top_k,
+            "trace_id": new_trace_id(),
+        }
     )
     return f"{result['answer']}\n\n--- 证据来源 ---\n{format_nodes(result['evidence'])}"
