@@ -94,6 +94,15 @@ MULTI_QUERY_PROMPT = (
     "查询："
 )
 
+EVAL_FAITHFULNESS_PROMPT = """判断「答案」是否完全基于「参考上下文」，没有编造。只输出 0 到 1 的小数（1=完全忠实，0=大量编造）。
+参考上下文：{context}
+答案：{answer}
+分数："""
+EVAL_RELEVANCY_PROMPT = """判断「答案」是否切题地回应了「问题」。只输出 0 到 1 的小数（1=完全切题，0=答非所问）。
+问题：{question}
+答案：{answer}
+分数："""
+
 # GraphRAG（默认关闭：需先 graph-build 构建图谱）
 ENABLE_GRAPH = os.getenv("ENABLE_GRAPH", "false").lower() == "true"
 # 持久化整个 StorageContext 到目录（图存储 + kg 节点 embedding 的 vector store），

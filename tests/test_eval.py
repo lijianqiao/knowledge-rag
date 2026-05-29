@@ -19,3 +19,22 @@ def test_aggregate_means():
             {"recall": 0.0, "faithfulness": 1.0, "relevancy": 1.0}]
     agg = ev.aggregate(rows)
     assert agg["recall"] == 0.5 and agg["faithfulness"] == 1.0 and agg["relevancy"] == 0.5
+
+
+def test_judge_faithfulness_parses_score(monkeypatch):
+    import app.eval as ev
+    monkeypatch.setattr(ev, "get_llm", lambda: type("L", (), {"complete": lambda s, p: "0.8"})())
+    assert ev.judge_faithfulness("答案", "上下文") == 0.8
+
+
+def test_judge_handles_garbage(monkeypatch):
+    import app.eval as ev
+    monkeypatch.setattr(ev, "get_llm", lambda: type("L", (), {"complete": lambda s, p: "无法判断"})())
+    assert ev.judge_faithfulness("答案", "上下文") == 0.0  # 解析失败给 0
+
+
+def test_score_ignores_irrelevant_numbers(monkeypatch):
+    import app.eval as ev
+    # 含无关数字「2025」，应取末尾的真实分 0.9，而非匹配到 0
+    monkeypatch.setattr(ev, "get_llm", lambda: type("L", (), {"complete": lambda s, p: "依据2025年数据，分数：0.9"})())
+    assert ev.judge_faithfulness("答案", "上下文") == 0.9
