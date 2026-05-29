@@ -25,11 +25,19 @@ from app.config import (
     BM25_TOP_K,
     CHAT_BASE_URL,
     CHAT_MODEL,
+    CHAT_PROVIDER,
+    CLOUD_CHAT_API_KEY,
+    CLOUD_CHAT_BASE_URL,
+    CLOUD_CHAT_MODEL,
+    CLOUD_EMBED_API_KEY,
+    CLOUD_EMBED_BASE_URL,
+    CLOUD_EMBED_MODEL,
     COLLECTION_NAME,
     CONTEXT_CHUNK_MAX_CHARS,
     DB_PATH,
     EMBED_BASE_URL,
     EMBED_MODEL,
+    EMBED_PROVIDER,
     ENABLE_HYBRID,
     ENABLE_MULTI_QUERY,
     LLM_MAX_TOKENS,
@@ -50,31 +58,32 @@ _bm25_retrievers: dict[str, BM25Retriever] = {}
 
 
 def get_embed_model() -> OpenAIEmbedding:
-    """获取 LlamaIndex Embedding 模型（连接本地 llama.cpp）。"""
+    """获取 LlamaIndex Embedding 模型（按 EMBED_PROVIDER 选 local/cloud）。"""
     global _embed_model
     if _embed_model is None:
+        if EMBED_PROVIDER == "cloud":
+            base, model, key = CLOUD_EMBED_BASE_URL, CLOUD_EMBED_MODEL, CLOUD_EMBED_API_KEY
+        else:
+            base, model, key = EMBED_BASE_URL, EMBED_MODEL, API_KEY
         _embed_model = OpenAIEmbedding(
-            model="text-embedding-ada-002",
-            model_name=EMBED_MODEL,
-            api_base=EMBED_BASE_URL,
-            api_key=API_KEY,
+            model="text-embedding-ada-002",  # 占位，真实模型由 model_name 决定
+            model_name=model, api_base=base, api_key=key,
         )
     return _embed_model
 
 
 def get_llm() -> OpenAILike:
-    """获取 OpenAI 兼容 Chat 模型（连接本地 llama.cpp）。"""
+    """获取 OpenAI 兼容 Chat 模型（按 CHAT_PROVIDER 选 local/cloud）。"""
     global _llm
     if _llm is None:
+        if CHAT_PROVIDER == "cloud":
+            base, model, key = CLOUD_CHAT_BASE_URL, CLOUD_CHAT_MODEL, CLOUD_CHAT_API_KEY
+        else:
+            base, model, key = CHAT_BASE_URL, CHAT_MODEL, API_KEY
         _llm = OpenAILike(
-            model=CHAT_MODEL,
-            api_base=CHAT_BASE_URL,
-            api_key=API_KEY,
-            is_chat_model=True,
-            temperature=0.2,
-            context_window=8192,
-            timeout=LLM_TIMEOUT,
-            max_tokens=LLM_MAX_TOKENS,
+            model=model, api_base=base, api_key=key,
+            is_chat_model=True, temperature=0.2, context_window=8192,
+            timeout=LLM_TIMEOUT, max_tokens=LLM_MAX_TOKENS,
         )
     return _llm
 
