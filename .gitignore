@@ -39,3 +39,6 @@ llama.cpp/
 # incremental import manifest
 .rag_manifest.json
 
+# trace logs
+logs/
+

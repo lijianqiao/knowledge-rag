@@ -146,3 +146,7 @@ AGENT_ANSWER_PROMPT = """基于以下证据回答问题。严格依据证据，�
 证据：
 {evidence}
 回答："""
+
+# 结构化链路追踪（JSON Lines，零依赖；默认开启）
+ENABLE_TRACE = os.getenv("ENABLE_TRACE", "true").lower() == "true"
+TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
