@@ -11,7 +11,8 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from llama_index.core.schema import NodeWithScore
 
-from app.config import ENABLE_QUERY_REWRITE, MAX_RETRIEVE_RETRIES, RETRIEVE_TOP_K
+from app.config import ENABLE_GRAPH, ENABLE_QUERY_REWRITE, MAX_RETRIEVE_RETRIES, RETRIEVE_TOP_K
+from app.graph_index import graph_retrieve
 from app.index import (
     build_context,
     format_nodes,
@@ -20,6 +21,7 @@ from app.index import (
     retrieve_with_diagnostics,
     rewrite_query,
 )
+from app.router import classify_route
 
 
 class RAGState(TypedDict):
@@ -39,12 +41,15 @@ class RAGState(TypedDict):
 
 
 def _retrieve(state: RAGState) -> dict:
-    """节点：LlamaIndex 检索 + 组装 context。"""
-    nodes, best_vector_score = retrieve_with_diagnostics(
-        query=state["search_query"],
-        top_k=state["top_k"],
-        doc_type=state["doc_type"],
-    )
+    """节点：按路由选 graph / vector 检索 + 组装 context。"""
+    route = classify_route(state["search_query"]) if ENABLE_GRAPH else "vector"
+    if route == "graph":
+        nodes = graph_retrieve(state["search_query"], top_k=state["top_k"])
+        best_vector_score = 1.0  # 图路径不参与余弦 weak 判断，置高分避免误触发重检索
+    else:
+        nodes, best_vector_score = retrieve_with_diagnostics(
+            query=state["search_query"], top_k=state["top_k"], doc_type=state["doc_type"]
+        )
     return {
         "nodes": nodes,
         "best_vector_score": best_vector_score,
