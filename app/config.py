@@ -27,6 +27,20 @@ LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "600"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 CONTEXT_CHUNK_MAX_CHARS = int(os.getenv("CONTEXT_CHUNK_MAX_CHARS", "1200"))
 
+# LLM/Embedding 提供方切换：local（llama.cpp）| cloud（OpenAI 兼容云端点）
+CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "local")
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "local")
+
+# 云端 Chat（任一 OpenAI 兼容厂商：DeepSeek / DashScope / Moonshot / 智谱 / OpenAI）
+CLOUD_CHAT_BASE_URL = os.getenv("CLOUD_CHAT_BASE_URL", "https://api.deepseek.com/v1")
+CLOUD_CHAT_MODEL = os.getenv("CLOUD_CHAT_MODEL", "deepseek-chat")
+CLOUD_CHAT_API_KEY = os.getenv("CLOUD_CHAT_API_KEY", "")
+
+# 云端 Embedding（注意：换 embed provider 会改向量维度，需 import --force 重灌）
+CLOUD_EMBED_BASE_URL = os.getenv("CLOUD_EMBED_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+CLOUD_EMBED_MODEL = os.getenv("CLOUD_EMBED_MODEL", "text-embedding-v3")
+CLOUD_EMBED_API_KEY = os.getenv("CLOUD_EMBED_API_KEY", "")
+
 RETRIEVE_TOP_K = int(os.getenv("RETRIEVE_TOP_K", "5"))
 MAX_RETRIEVE_RETRIES = int(os.getenv("MAX_RETRIEVE_RETRIES", "2"))
 RETRIEVE_SCORE_THRESHOLD = float(os.getenv("RETRIEVE_SCORE_THRESHOLD", "0.35"))
