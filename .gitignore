@@ -12,6 +12,9 @@ wheels/
 # db
 chroma_db/
 
+# graph store
+graph_store/
+
 # env
 .env
 

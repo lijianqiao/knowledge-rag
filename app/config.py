@@ -79,3 +79,25 @@ MULTI_QUERY_PROMPT = (
     "原始问题：{query}\n"
     "查询："
 )
+
+# GraphRAG（默认关闭：需先 graph-build 构建图谱）
+ENABLE_GRAPH = os.getenv("ENABLE_GRAPH", "false").lower() == "true"
+# 持久化整个 StorageContext 到目录（图存储 + kg 节点 embedding 的 vector store），
+# 不能只存单个 json：SimplePropertyGraphStore.supports_vector_queries=False，
+# embedding 在独立 vector store 里，必须整目录持久化（G-C）。
+GRAPH_PERSIST_DIR = os.getenv("GRAPH_PERSIST_DIR", "./graph_store")
+GRAPH_MAX_PATHS_PER_CHUNK = int(os.getenv("GRAPH_MAX_PATHS_PER_CHUNK", "10"))
+GRAPH_RETRIEVE_TOP_K = int(os.getenv("GRAPH_RETRIEVE_TOP_K", "8"))
+
+# 运维领域图谱 schema（SchemaLLMPathExtractor 用）
+GRAPH_ENTITIES = ["服务", "组件", "故障", "根因", "指标", "操作", "环境", "人员"]
+GRAPH_RELATIONS = ["依赖", "导致", "属于", "监控", "处理", "部署于", "负责"]
+
+ROUTE_CLASSIFY_PROMPT = """判断下面的运维问题更适合哪种检索：
+- graph：涉及实体之间的关系、影响链、根因传播、跨多个文档的全局关联（如"A 故障会影响哪些服务""X 的根因链"）
+- vector：单点事实、操作步骤、定义、某文档内的具体内容
+
+只输出一个词：graph 或 vector。
+
+问题：{question}
+答案："""
