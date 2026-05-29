@@ -10,10 +10,10 @@ def _node(text: str, score: float) -> NodeWithScore:
 
 
 class _FakeReranker:
-    """按文本长度倒序重排，且不自行截断（验证 apply_rerank 负责切片）。"""
+    """按文本长度倒序重排并切到 top_n（新契约：reranker.rerank 负责切片）。"""
 
-    def postprocess_nodes(self, nodes, query_str):
-        return sorted(nodes, key=lambda n: len(n.get_content()), reverse=True)
+    def rerank(self, query, nodes, top_n):
+        return sorted(nodes, key=lambda n: len(n.get_content()), reverse=True)[:top_n]
 
 
 def test_apply_rerank_none_reranker_truncates_only():

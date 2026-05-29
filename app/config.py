@@ -35,6 +35,10 @@ RETRIEVE_SCORE_THRESHOLD = float(os.getenv("RETRIEVE_SCORE_THRESHOLD", "0.35"))
 RETRIEVE_CANDIDATE_K = int(os.getenv("RETRIEVE_CANDIDATE_K", "30"))
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").lower() == "true"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_BACKEND = os.getenv("RERANK_BACKEND", "api")  # api | local
+RERANK_BASE_URL = os.getenv("RERANK_BASE_URL", "http://127.0.0.1:8082")
+RERANK_API_MODEL = os.getenv("RERANK_API_MODEL", "Qwen3-Reranker-0.6B")
+# RERANK_MODEL 仍用于 local 后端（SentenceTransformerRerank）
 # 注：重排后保留条数由调用方 top_k（CLI -n）决定，不再单独配 RERANK_TOP_N，避免覆盖 -n。
 
 # Hybrid 检索（稠密 + BM25 稀疏融合）
