@@ -79,6 +79,20 @@ GRAPH_MAX_PATHS_PER_CHUNK=10
 # 跨文档推理 Agent（默认关闭）
 ENABLE_AGENT=false
 MAX_AGENT_STEPS=4
+
+# LLM / Embedding 提供方切换：local（本地 llama.cpp）| cloud（OpenAI 兼容云端点），两角色独立
+CHAT_PROVIDER=local
+EMBED_PROVIDER=local
+
+# 云端 Chat（CHAT_PROVIDER=cloud 时生效；任一 OpenAI 兼容厂商）
+CLOUD_CHAT_BASE_URL=https://api.deepseek.com/v1
+CLOUD_CHAT_MODEL=deepseek-chat
+CLOUD_CHAT_API_KEY=
+
+# 云端 Embedding（EMBED_PROVIDER=cloud 时生效；切换会改向量维度，需 import --force 重灌）
+CLOUD_EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+CLOUD_EMBED_MODEL=text-embedding-v3
+CLOUD_EMBED_API_KEY=
 ```
 
 Reranker 默认后端为 `api`，需在 `RERANK_BASE_URL` 处提供 TEI/Jina 风格的 `/rerank` HTTP 服务；设 `RERANK_BACKEND=local` 则改用本地 cross-encoder（首次使用会下载 `BAAI/bge-reranker-v2-m3`，约 2.27GB）。离线且无 rerank 服务时设 `ENABLE_RERANK=false`。`ENABLE_RERANK`/`ENABLE_HYBRID`/`ENABLE_QUERY_REWRITE`/`ENABLE_MULTI_QUERY` 全设 `false` 即退回纯稠密 top_k 旧行为。
@@ -140,6 +154,25 @@ GraphRAG 与向量检索是**两套解耦的子系统**，默认全部关闭（`
 | `GRAPH_MAX_PATHS_PER_CHUNK` | `10` | 每个 chunk 抽取的最大三元组数 |
 | `ENABLE_AGENT` | `false` | 跨文档推理 Agent 开关 |
 | `MAX_AGENT_STEPS` | `4` | Agent 最大决策步数 |
+
+## 云端 LLM
+
+Chat 与 Embedding 可各自在**本地 llama.cpp** 与**云端 OpenAI 兼容端点**之间切换，由 `CHAT_PROVIDER` / `EMBED_PROVIDER` 控制（默认均为 `local`）。两个 provider 相互独立，可混用（如云 chat + 本地 embed）。不配置任何云变量时行为与之前完全一致。
+
+- **切云端 chat**：设 `CHAT_PROVIDER=cloud`，并配 `CLOUD_CHAT_BASE_URL` / `CLOUD_CHAT_MODEL` / `CLOUD_CHAT_API_KEY`。可对接任一 OpenAI 兼容厂商：DeepSeek、通义 DashScope、Moonshot、智谱、OpenAI 等（默认值为 DeepSeek）。
+- **切云端 embedding**：设 `EMBED_PROVIDER=cloud`，并配 `CLOUD_EMBED_BASE_URL` / `CLOUD_EMBED_MODEL` / `CLOUD_EMBED_API_KEY`（默认值为通义 DashScope `text-embedding-v3`）。
+
+> **警告**：切换 `EMBED_PROVIDER` 会改变向量维度，旧 Chroma collection 维度不兼容，必须 `uv run python main.py import --force` 重灌向量库后才能查询。仅切 chat（embedding 不变）无此问题。
+
+最小示例（PowerShell，临时环境变量，仅本进程生效；只切云 chat、embedding 仍走本地，无需重灌）：
+
+```powershell
+$env:CHAT_PROVIDER = "cloud"
+$env:CLOUD_CHAT_API_KEY = "sk-你的key"
+uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
+```
+
+> 真实云 key 的端到端冒烟为可选手测步骤（需自备 key）；不配 key 时本地链路照常工作。
 
 ## 项目结构
 
