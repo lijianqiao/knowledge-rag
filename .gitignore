@@ -15,6 +15,9 @@ chroma_db/
 # graph store
 graph_store/
 
+# auto-merge parent-child store
+automerge_store/
+
 # env
 .env
 

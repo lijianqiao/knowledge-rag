@@ -156,3 +156,10 @@ TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
 ENABLE_SEMANTIC_CACHE = os.getenv("ENABLE_SEMANTIC_CACHE", "false").lower() == "true"
 CACHE_SIM_THRESHOLD = float(os.getenv("CACHE_SIM_THRESHOLD", "0.97"))
 CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "128"))
+
+# 父子 / auto-merging 索引（默认关闭；本任务仅建模块+持久化，未接入检索热路径）
+# 父节点存独立 docstore（docstore.json），叶子节点存独立 chroma collection；
+# AutoMergingRetriever 命中叶子后按层级合并回父块喂 LLM。
+ENABLE_AUTO_MERGE = os.getenv("ENABLE_AUTO_MERGE", "false").lower() == "true"
+AUTO_MERGE_CHUNK_SIZES = [int(x) for x in os.getenv("AUTO_MERGE_CHUNK_SIZES", "2048,512,128").split(",")]
+AUTO_MERGE_PERSIST_DIR = os.getenv("AUTO_MERGE_PERSIST_DIR", "./automerge_store")
