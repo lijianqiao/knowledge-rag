@@ -101,3 +101,23 @@ ROUTE_CLASSIFY_PROMPT = """判断下面的运维问题更适合哪种检索：
 
 问题：{question}
 答案："""
+
+# 跨文档推理 Agent（显式 plan→act→reflect 循环；默认关闭）
+ENABLE_AGENT = os.getenv("ENABLE_AGENT", "false").lower() == "true"
+MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "4"))
+
+AGENT_DECIDE_PROMPT = """你是运维知识库推理助手，正在多步收集证据回答问题。
+已知问题：{question}
+已收集证据（编号）：
+{evidence}
+
+请决定下一步。只输出 JSON，不要解释：
+- 若还需检索：{{"action": "search", "tool": "vector"或"graph", "query": "下一步检索的子问题"}}
+- 若证据已足够回答：{{"action": "answer"}}
+"""
+
+AGENT_ANSWER_PROMPT = """基于以下证据回答问题。严格依据证据，不足时说明「信息不足」，末尾列出引用编号如 [1][2]。
+问题：{question}
+证据：
+{evidence}
+回答："""
