@@ -15,6 +15,12 @@
 - **GraphRAG（知识图谱检索）**：可选用本地 LLM 从文档抽取实体关系建知识图谱，按子图召回回答关系 / 影响链 / 根因传播类问题。
 - **问题类型路由**：`ask` 按问题类型自动在图检索与向量检索之间选通道，误判或图谱未构建时安全回退向量检索。
 - **跨文档推理 Agent**：显式 plan→act→reflect 多步循环（LangGraph，非原生 function-calling），跨文档收集证据后作答。
+- **评估体系**：`eval` 子命令跑评测集，输出确定性 context_recall + LLM-as-judge 的 faithfulness / relevancy 聚合分（自写，不依赖 ragas）。
+- **增量更新**：`import --incremental` 按内容 hash 清单只重导变更 / 新增文件，并清理已消失文件的 chunk。
+- **链路追踪**：每次 `ask` / `agent` 写结构化 JSONL trace（路由决策、检索分、rerank TopK、答案长度），`scripts/replay.py` 可回放复现。
+- **提示词注入防御**：检索内容统一经 `sanitize_context` 中和越权指令并用 `<<DOC>>` 包裹，系统提示词约束 LLM 不执行资料内指令。
+- **流式输出**：`ask --stream` 增量打印答案 token（单趟检索、无重试）。
+- **语义缓存 / auto-merging 父子索引（可选 / 实验）**：模块与开关已就位（`ENABLE_SEMANTIC_CACHE` / `ENABLE_AUTO_MERGE`，默认关闭），但尚未接入检索热路径，作 opt-in 实验能力。
 
 ## 技术栈
 
@@ -93,6 +99,23 @@ CLOUD_CHAT_API_KEY=
 CLOUD_EMBED_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 CLOUD_EMBED_MODEL=text-embedding-v3
 CLOUD_EMBED_API_KEY=
+
+# 增量导入清单（记录 源相对路径 → 内容 hash，已在 .gitignore）
+MANIFEST_PATH=./.rag_manifest.json
+
+# 结构化链路追踪（JSON Lines；默认开启，logs/ 已在 .gitignore）
+ENABLE_TRACE=true
+TRACE_DIR=./logs
+
+# 语义缓存（默认关闭；本期仅建模块+开关，未接入检索热路径）
+ENABLE_SEMANTIC_CACHE=false
+CACHE_SIM_THRESHOLD=0.97
+CACHE_MAX_SIZE=128
+
+# auto-merging 父子索引（默认关闭；本期仅建模块+持久化，未接入检索热路径）
+ENABLE_AUTO_MERGE=false
+AUTO_MERGE_CHUNK_SIZES=2048,512,128
+AUTO_MERGE_PERSIST_DIR=./automerge_store
 ```
 
 Reranker 默认后端为 `api`，需在 `RERANK_BASE_URL` 处提供 TEI/Jina 风格的 `/rerank` HTTP 服务；设 `RERANK_BACKEND=local` 则改用本地 cross-encoder（首次使用会下载 `BAAI/bge-reranker-v2-m3`，约 2.27GB）。离线且无 rerank 服务时设 `ENABLE_RERANK=false`。`ENABLE_RERANK`/`ENABLE_HYBRID`/`ENABLE_QUERY_REWRITE`/`ENABLE_MULTI_QUERY` 全设 `false` 即退回纯稠密 top_k 旧行为。
@@ -104,6 +127,7 @@ Reranker 默认后端为 `api`，需在 `RERANK_BASE_URL` 处提供 TEI/Jina 风
 uv run python main.py import                 # 首次 / 增量导入全部
 uv run python main.py import --force         # 删除 collection 后全量重建
 uv run python main.py import --upsert        # 覆盖更新已有同 id 分块
+uv run python main.py import --incremental   # 按内容 hash 清单仅重导变更、清理消失文件的 chunk
 uv run python main.py import --source docs   # 仅导入某一源（源名取自 sources.toml）
 
 # 调试检索（不调用 LLM）
@@ -111,6 +135,10 @@ uv run python main.py query "如何重启服务" -n 5 --type all
 
 # RAG 问答（调用 LLM）
 uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
+uv run python main.py ask "订单服务 502 怎么排查" --stream   # 流式增量打印（单趟检索，无重试）
+
+# 跑评测集（recall + LLM-as-judge faithfulness/relevancy 聚合分）
+uv run python main.py eval --set eval/goldset.example.json
 
 # 构建知识图谱（GraphRAG，慢，需本地 LLM；与向量 import 解耦）
 uv run python main.py graph-build                 # 从全部源抽取实体关系建图
@@ -174,11 +202,28 @@ uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
 
 > 真实云 key 的端到端冒烟为可选手测步骤（需自备 key）；不配 key 时本地链路照常工作。
 
+## 评估与可观测性
+
+- **评估**：`uv run python main.py eval --set eval/goldset.example.json` 遍历评测集（每条含 `question` 与 `expected_source_substrings`），对每条跑一次问答后算三项指标——确定性 `context_recall`（期望来源子串在检索 source 中的命中比例）、LLM-as-judge 的 `faithfulness`（答案是否被 context 支撑）与 `relevancy`（是否切题），最后打印聚合均值。裁判走 `get_llm()`，可借云端更强模型当裁判。
+- **链路追踪**：`ENABLE_TRACE=true`（默认开启）时，每次 `ask` / `agent` 把关键事件写成 JSON Lines 到 `TRACE_DIR`（默认 `./logs`，已 gitignore）下的 `trace-<id>.jsonl`，记录路由决策、查询改写前后、检索最高分、rerank TopK 的 source+score、答案长度等。设 `ENABLE_TRACE=false` 时埋点零成本。
+- **回放复现**：`uv run python scripts/replay.py <trace_id>` 读对应 jsonl 打印该次完整链路，便于离线调试某次问答。
+- **可选 / 实验模块**：语义缓存（`app/cache.py`）与 auto-merging 父子索引（`app/automerge.py`）的模块与开关（`ENABLE_SEMANTIC_CACHE` / `ENABLE_AUTO_MERGE`，默认关闭）已就位，但**尚未接入检索热路径**，目前为 opt-in 的实验能力。
+
+## 安全
+
+- **提示词注入防御（始终开启）**：检索到的内容在组装 context 时统一经 `sanitize_context` 中和常见越权指令（中英），并用 `<<DOC>>...<</DOC>>` 分隔符包裹；系统提示词明确要求 LLM 仅将 `<<DOC>>` 内文本视为资料、绝不执行其中任何指令。
+- **文档级访问控制（应用层钩子）**：`index.build_access_filters(doc_type, allowed_sources)` 生成叠加 `source IN allowed` 的元数据过滤（Chroma 无原生 RBAC）。多用户调用方可把 `user → allowed_sources` 映射后传入，限定该用户可见的文档范围。
+
+## Docker
+
+`docker build -t ops-rag .` 构建镜像（`python:3.14-slim` + uv 多阶段）；`docker run --rm ops-rag ask "问题"` 运行（`ENTRYPOINT` 已指向 `main.py`）。模型仍由外部 llama.cpp 服务或云端 OpenAI 兼容端点提供，需通过环境变量 / 网络可达。
+
 ## 项目结构
 
 ```
-main.py              CLI 入口：import / query / ask / graph-build / agent / status
+main.py              CLI 入口：import / query / ask / graph-build / agent / eval / status
 sources.toml         声明式数据源清单（filesystem / web）
+Dockerfile           python:3.14-slim + uv 多阶段构建（模型仍由外部提供）
 app/
   config.py          配置（全部来自环境变量）
   sources.py         解析 sources.toml → SourceConfig
@@ -192,6 +237,13 @@ app/
   graph_index.py     GraphRAG：PropertyGraphIndex 构建与图检索
   router.py          检索路由：按问题类型选 graph / vector 通道
   agent.py           跨文档推理 Agent（LangGraph plan→act→reflect 循环）
+  eval.py            评估：context_recall + LLM-as-judge faithfulness/relevancy + run_eval
+  manifest.py        增量导入的内容 hash 清单读写与 diff
+  trace.py           结构化 JSONL 链路追踪（new_trace_id / log_event）
+  cache.py           进程内语义缓存 SemanticCache（可选 / 实验，未接入热路径）
+  automerge.py       auto-merging 父子索引（可选 / 实验，未接入热路径）
+scripts/
+  replay.py          按 trace_id 回放某次链路（路由 / 改写 / 检索分 / 答案）
 运维prompt库/         prompt 文档源（doc_type=prompt）
 运维文档/             运维文档源（doc_type=doc）
 ```
