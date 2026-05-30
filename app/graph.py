@@ -132,13 +132,8 @@ def _route_after_output(state: RAGState) -> Literal["prepare_retry", "__end__"]:
     return END
 
 
-def build_rag_graph():
-    """
-    构建 LangGraph RAG 工作流。
-
-    Returns:
-        编译后的 StateGraph
-    """
+def _build_rag_builder() -> StateGraph:
+    """组装 RAG 工作流节点与边（未编译），供无状态图与会话图共用。"""
     builder = StateGraph(RAGState)
 
     builder.add_node("retrieve", _retrieve)
@@ -152,7 +147,36 @@ def build_rag_graph():
     builder.add_conditional_edges("output", _route_after_output)
     builder.add_edge("prepare_retry", "retrieve")
 
-    return builder.compile()
+    return builder
+
+
+def build_rag_graph():
+    """
+    构建 LangGraph RAG 工作流（无状态，无 checkpointer）。
+
+    Returns:
+        编译后的 StateGraph
+    """
+    return _build_rag_builder().compile()
+
+
+def build_session_graph(checkpointer, interrupt_before: list[str] | None = None):
+    """
+    构建带 checkpointer 的会话图：复用无状态图的同一套节点/边，额外挂持久化与可选 HITL 中断。
+
+    与 `build_rag_graph` 并存——无状态 `run_ask` 路径不受影响。
+
+    Args:
+        checkpointer: LangGraph checkpointer（如 SqliteSaver），按 thread_id 持久化会话状态
+        interrupt_before: 在这些节点前中断以供人工审批（如 ["generate"]）；None 表示直通
+
+    Returns:
+        编译后的 StateGraph（支持 thread_id 与 interrupt/resume）
+    """
+    builder = _build_rag_builder()
+    if interrupt_before:
+        return builder.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
+    return builder.compile(checkpointer=checkpointer)
 
 
 _rag_graph = None

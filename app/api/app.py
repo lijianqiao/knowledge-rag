@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.api import routes_rag
+from app.api import routes_rag, routes_session
 
 
 def create_app() -> FastAPI:
@@ -13,4 +13,5 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(routes_rag.router)
+    app.include_router(routes_session.router)
     return app
