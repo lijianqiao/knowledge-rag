@@ -163,3 +163,28 @@ CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "128"))
 ENABLE_AUTO_MERGE = os.getenv("ENABLE_AUTO_MERGE", "false").lower() == "true"
 AUTO_MERGE_CHUNK_SIZES = [int(x) for x in os.getenv("AUTO_MERGE_CHUNK_SIZES", "2048,512,128").split(",")]
 AUTO_MERGE_PERSIST_DIR = os.getenv("AUTO_MERGE_PERSIST_DIR", "./automerge_store")
+
+# ===== 服务化（FastAPI）=====
+# API_KEYS：JSON 映射 key -> {"user":..., "allowed_sources":[...]}；空 = 开放模式（不校验，allowed_sources=None=全部）
+# 健壮解析：格式非法时退回空 dict（开放模式）并告警，绝不让 config 导入崩溃。
+import json as _json
+
+
+def _parse_api_keys() -> dict:
+    raw = os.getenv("API_KEYS", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = _json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except _json.JSONDecodeError:
+        import warnings
+        warnings.warn("API_KEYS 不是合法 JSON，已退回开放模式（不鉴权）", stacklevel=2)
+        return {}
+
+
+API_KEYS: dict = _parse_api_keys()
+SERVE_HOST = os.getenv("SERVE_HOST", "127.0.0.1")
+SERVE_PORT = int(os.getenv("SERVE_PORT", "8000"))
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
+CHECKPOINT_DB = os.getenv("CHECKPOINT_DB", "./sessions.sqlite")

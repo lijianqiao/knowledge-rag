@@ -45,3 +45,6 @@ llama.cpp/
 # trace logs
 logs/
 
+# session checkpointer (SQLite)
+sessions.sqlite*
+

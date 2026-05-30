@@ -18,6 +18,9 @@ dependencies = [
     "llama-index-readers-file>=0.5.0",
     "llama-index-readers-web>=0.5.0",
     "httpx>=0.28.0",
+    "fastapi>=0.136.3",
+    "uvicorn[standard]>=0.48.0",
+    "langgraph-checkpoint-sqlite>=3.1.0",
 ]
 
 [dependency-groups]
