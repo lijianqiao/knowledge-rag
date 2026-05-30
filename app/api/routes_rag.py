@@ -1,6 +1,7 @@
 """RAG 端点：/ask /query /status。薄服务层，仅鉴权 + 透传到现有业务函数。"""
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 
 from app.api.auth import Principal, require_principal
 from app.api.schemas import (
@@ -10,7 +11,7 @@ from app.api.schemas import (
     QueryResponse,
     StatusResponse,
 )
-from app.graph import run_ask
+from app.graph import run_ask, run_ask_stream
 from app.index import format_nodes, get_status, retrieve_nodes
 
 router = APIRouter()
@@ -22,6 +23,22 @@ def ask(req: AskRequest, principal: Principal = Depends(require_principal)) -> A
         req.question, req.top_k, req.doc_type, allowed_sources=principal.allowed_sources
     )
     return AskResponse(answer=answer)
+
+
+@router.post("/ask/stream")
+def ask_stream(
+    req: AskRequest, principal: Principal = Depends(require_principal)
+) -> StreamingResponse:
+    def gen():
+        for chunk in run_ask_stream(
+            req.question,
+            req.top_k,
+            req.doc_type,
+            allowed_sources=principal.allowed_sources,
+        ):
+            yield f"data: {chunk}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.post("/query", response_model=QueryResponse)
