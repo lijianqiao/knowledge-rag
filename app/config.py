@@ -188,3 +188,11 @@ SERVE_HOST = os.getenv("SERVE_HOST", "127.0.0.1")
 SERVE_PORT = int(os.getenv("SERVE_PORT", "8000"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 CHECKPOINT_DB = os.getenv("CHECKPOINT_DB", "./sessions.sqlite")
+
+# ===== 可观测平台（Langfuse，可选，默认关）=====
+# 自写 app/trace.py（JSONL）仍是默认观测手段；ENABLE_LANGFUSE=true 时才尝试转发到 Langfuse。
+# SDK 未安装即降级（forward_trace 返回 False），绝不破坏请求路径。
+ENABLE_LANGFUSE = os.getenv("ENABLE_LANGFUSE", "false").lower() == "true"
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "")
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
