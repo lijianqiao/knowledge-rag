@@ -25,3 +25,20 @@ class QueryResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+
+
+class AgentRequest(BaseModel):
+    question: str
+    top_k: int = 5
+
+
+class AgentResponse(BaseModel):
+    answer: str
+
+
+class EvalRequest(BaseModel):
+    goldset: str = "eval/goldset.example.json"
+
+
+class EvalResponse(BaseModel):
+    report: str
