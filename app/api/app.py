@@ -2,6 +2,8 @@
 
 from fastapi import FastAPI
 
+from app.api import routes_rag
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="运维知识库 RAG API", version="5.0")
@@ -10,5 +12,5 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
-    # 路由在后续 Task 挂载：app.include_router(...)
+    app.include_router(routes_rag.router)
     return app
