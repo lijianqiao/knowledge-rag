@@ -12,7 +12,7 @@ def test_run_ask_emits_retrieve_and_answer(monkeypatch):
 
     node = NodeWithScore(node=TextNode(text="内容", id_="1"), score=0.9)
     # ENABLE_GRAPH 默认 false → route=vector，不调 classify_route
-    monkeypatch.setattr(g, "retrieve_with_diagnostics", lambda query, top_k, doc_type: ([node], 0.9))
+    monkeypatch.setattr(g, "retrieve_with_diagnostics", lambda query, top_k, doc_type, allowed_sources=None: ([node], 0.9))
     monkeypatch.setattr(g, "build_context", lambda nodes: "ctx")
     monkeypatch.setattr(g, "format_nodes", lambda nodes: "src")
     monkeypatch.setattr(g, "generate_answer", lambda q, c: "答案")
@@ -41,7 +41,7 @@ def test_run_agent_emits_decide_act_answer(monkeypatch):
     monkeypatch.setattr(ag, "MAX_AGENT_STEPS", 2)
     monkeypatch.setattr(
         ag, "retrieve_nodes",
-        lambda q, top_k, doc_type="all": [NodeWithScore(node=TextNode(text="内容", id_="1"), score=0.9)],
+        lambda q, top_k, doc_type="all", allowed_sources=None: [NodeWithScore(node=TextNode(text="内容", id_="1"), score=0.9)],
     )
     monkeypatch.setattr(ag, "graph_retrieve", lambda q, top_k: [])
 

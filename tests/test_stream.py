@@ -35,7 +35,7 @@ def test_generate_answer_stream_timeout_raises(monkeypatch):
 
 
 def test_run_ask_stream_appends_sources(monkeypatch):
-    monkeypatch.setattr(g, "_do_retrieve", lambda sq, tk, dt: ([], 0.9, "ctx", "src行"))
+    monkeypatch.setattr(g, "_do_retrieve", lambda sq, tk, dt, allowed_sources=None: ([], 0.9, "ctx", "src行"))
     monkeypatch.setattr(g, "generate_answer_stream", lambda q, c: iter(["A", "B"]))
 
     out = list(g.run_ask_stream("问题"))

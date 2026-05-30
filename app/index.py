@@ -281,12 +281,25 @@ def _filter_by_doc_type(nodes: list[NodeWithScore], doc_type: str) -> list[NodeW
     return [node for node in nodes if (node.metadata or {}).get("doc_type") == doc_type]
 
 
+def _filter_by_access(
+    nodes: list[NodeWithScore], allowed_sources: list[str] | None
+) -> list[NodeWithScore]:
+    """按 source 白名单过滤节点（应用层 RBAC 兜底；BM25 通道不走 Chroma 过滤，需在融合后兜底）。
+
+    allowed_sources 为 None → 原样返回（行为不变）；否则仅保留 source 在白名单内的节点。
+    """
+    if allowed_sources is None:
+        return nodes
+    return [node for node in nodes if (node.metadata or {}).get("source") in allowed_sources]
+
+
 def _retrieve_core(
     query: str,
     top_k: int,
     doc_type: str,
     *,
     want_vector_score: bool,
+    allowed_sources: list[str] | None = None,
 ) -> tuple[list[NodeWithScore], float | None]:
     """
     检索核心：宽召回 →（Hybrid）稠密+BM25 融合 → 按类型过滤 → cross-encoder 重排。
@@ -309,7 +322,7 @@ def _retrieve_core(
     candidate_k = max(top_k, RETRIEVE_CANDIDATE_K)
     vector_retriever = get_index().as_retriever(
         similarity_top_k=candidate_k,
-        filters=_build_metadata_filters(doc_type),
+        filters=build_access_filters(doc_type, allowed_sources),
     )
 
     best_vector_score: float | None = None
@@ -340,6 +353,7 @@ def _retrieve_core(
         best_vector_score = max((n.score or 0.0) for n in nodes) if nodes else 0.0
 
     nodes = _filter_by_doc_type(nodes, doc_type)
+    nodes = _filter_by_access(nodes, allowed_sources)
     final = apply_rerank(get_reranker(), query, nodes, top_n=top_k)
     return final, best_vector_score
 
@@ -348,9 +362,12 @@ def retrieve_nodes(
     query: str,
     top_k: int = 5,
     doc_type: str = "all",
+    allowed_sources: list[str] | None = None,
 ) -> list[NodeWithScore]:
     """通用检索入口（CLI query / 图首检索复用）。"""
-    nodes, _ = _retrieve_core(query, top_k, doc_type, want_vector_score=False)
+    nodes, _ = _retrieve_core(
+        query, top_k, doc_type, want_vector_score=False, allowed_sources=allowed_sources
+    )
     return nodes
 
 
@@ -358,6 +375,7 @@ def retrieve_with_diagnostics(
     query: str,
     top_k: int = 5,
     doc_type: str = "all",
+    allowed_sources: list[str] | None = None,
 ) -> tuple[list[NodeWithScore], float]:
     """
     图重检索用：额外返回向量召回最高余弦分，供 weak 判断（F1）。
@@ -365,7 +383,9 @@ def retrieve_with_diagnostics(
     Returns:
         (最终节点, 向量召回最高余弦分)
     """
-    nodes, best_vector_score = _retrieve_core(query, top_k, doc_type, want_vector_score=True)
+    nodes, best_vector_score = _retrieve_core(
+        query, top_k, doc_type, want_vector_score=True, allowed_sources=allowed_sources
+    )
     return nodes, best_vector_score or 0.0
 
 

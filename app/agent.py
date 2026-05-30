@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     evidence: list[NodeWithScore]
     answer: str
     trace_id: str
+    allowed_sources: list | None
 
 
 def _parse_decision(text: str) -> dict:
@@ -54,7 +55,12 @@ def _act(state: AgentState) -> dict:
     d = state["decision"]
     query = d.get("query") or state["question"]
     top_k = state["top_k"]
-    nodes = graph_retrieve(query, top_k=top_k) if d.get("tool") == "graph" else retrieve_nodes(query, top_k=top_k)
+    # graph 路径无 source 过滤 → RBAC 为 best-effort（KB 关系图通常非敏感）；向量路径透传白名单。
+    nodes = (
+        graph_retrieve(query, top_k=top_k)
+        if d.get("tool") == "graph"
+        else retrieve_nodes(query, top_k=top_k, allowed_sources=state.get("allowed_sources"))
+    )
     seen = {n.node.node_id for n in state["evidence"]}
     merged = list(state["evidence"]) + [n for n in nodes if n.node.node_id not in seen]
     log_event(
@@ -103,8 +109,12 @@ def get_agent_graph():
     return _agent_graph
 
 
-def run_agent(question: str, top_k: int = 5) -> str:
-    """执行跨文档推理 Agent，返回答案 + 引用来源。"""
+def run_agent(question: str, top_k: int = 5, allowed_sources: list | None = None) -> str:
+    """执行跨文档推理 Agent，返回答案 + 引用来源。
+
+    allowed_sources：应用层 RBAC 白名单，透传至向量检索；graph 检索不支持 source 过滤，
+    其 RBAC 为 best-effort。None 表示不限来源（行为不变）。
+    """
     result = get_agent_graph().invoke(
         {
             "question": question,
@@ -114,6 +124,7 @@ def run_agent(question: str, top_k: int = 5) -> str:
             "answer": "",
             "top_k": top_k,
             "trace_id": new_trace_id(),
+            "allowed_sources": allowed_sources,
         }
     )
     return f"{result['answer']}\n\n--- 证据来源 ---\n{format_nodes(result['evidence'])}"

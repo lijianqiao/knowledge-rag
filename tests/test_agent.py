@@ -28,7 +28,7 @@ def test_act_appends_unique_evidence(monkeypatch):
     from llama_index.core.schema import NodeWithScore, TextNode
 
     n = NodeWithScore(node=TextNode(text="订单服务依赖Redis", id_="1"), score=0.9)
-    monkeypatch.setattr(ag, "retrieve_nodes", lambda q, top_k, doc_type="all": [n])
+    monkeypatch.setattr(ag, "retrieve_nodes", lambda q, top_k, doc_type="all", allowed_sources=None: [n])
     monkeypatch.setattr(ag, "graph_retrieve", lambda q, top_k: [])
 
     state = {"evidence": [], "decision": {"action": "search", "tool": "vector", "query": "Redis"}, "top_k": 5}
@@ -57,7 +57,7 @@ def test_run_agent_returns_answer(monkeypatch):
     monkeypatch.setattr(ag, "MAX_AGENT_STEPS", 1)
     monkeypatch.setattr(
         ag, "retrieve_nodes",
-        lambda q, top_k, doc_type="all": [NodeWithScore(node=TextNode(text="订单服务依赖Redis", id_="1"), score=0.9)],
+        lambda q, top_k, doc_type="all", allowed_sources=None: [NodeWithScore(node=TextNode(text="订单服务依赖Redis", id_="1"), score=0.9)],
     )
     monkeypatch.setattr(ag, "graph_retrieve", lambda q, top_k: [])
 
