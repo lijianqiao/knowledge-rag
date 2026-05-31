@@ -19,9 +19,18 @@ def test_parse_decision_garbage_defaults_answer():
 
 def test_should_continue_stops_at_max_steps(monkeypatch):
     monkeypatch.setattr(ag, "MAX_AGENT_STEPS", 2)
-    assert ag._route_after_decide({"step": 2, "decision": {"action": "search"}}) == "answer"
-    assert ag._route_after_decide({"step": 1, "decision": {"action": "search"}}) == "act"
-    assert ag._route_after_decide({"step": 1, "decision": {"action": "answer"}}) == "answer"
+    ev = [object()]  # 非空证据
+    # 步数上限优先：即便有证据/想继续，达上限也终止
+    assert ag._route_after_decide({"step": 2, "evidence": ev, "decision": {"action": "search"}}) == "answer"
+    # 有证据：按决策走
+    assert ag._route_after_decide({"step": 1, "evidence": ev, "decision": {"action": "search"}}) == "act"
+    assert ag._route_after_decide({"step": 1, "evidence": ev, "decision": {"action": "answer"}}) == "answer"
+
+
+def test_route_forces_initial_retrieval_when_no_evidence(monkeypatch):
+    """实跑调参（R2）：尚无证据时，即便模型误选 answer 也强制先 act 一次。"""
+    monkeypatch.setattr(ag, "MAX_AGENT_STEPS", 4)
+    assert ag._route_after_decide({"step": 1, "evidence": [], "decision": {"action": "answer"}}) == "act"
 
 
 def test_act_appends_unique_evidence(monkeypatch):

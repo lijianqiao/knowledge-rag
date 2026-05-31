@@ -84,6 +84,10 @@ def _answer(state: AgentState) -> dict:
 def _route_after_decide(state: AgentState) -> Literal["act", "answer"]:
     if state["step"] >= MAX_AGENT_STEPS:
         return "answer"
+    # 强制首轮检索：尚无证据时即便模型选 answer 也先 act 一次，杜绝"零证据直接信息不足"
+    # （R2：小模型 decide 不可靠；实跑发现 9B 首步常误选 answer）。步数上限兜底防死循环。
+    if not state.get("evidence"):
+        return "act"
     return "act" if state["decision"].get("action") == "search" else "answer"
 
 
