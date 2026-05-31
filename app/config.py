@@ -130,6 +130,7 @@ ROUTE_CLASSIFY_PROMPT = """判断下面的运维问题更适合哪种检索：
 
 # 跨文档推理 Agent（显式 plan→act→reflect 循环；默认关闭）
 ENABLE_AGENT = os.getenv("ENABLE_AGENT", "false").lower() == "true"
+ENABLE_NATIVE_TOOL_CALLING = os.getenv("ENABLE_NATIVE_TOOL_CALLING", "false").lower() == "true"
 MAX_AGENT_STEPS = int(os.getenv("MAX_AGENT_STEPS", "4"))
 
 AGENT_DECIDE_PROMPT = """你是运维知识库推理助手，正在多步收集证据回答问题。

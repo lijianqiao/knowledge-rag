@@ -6,7 +6,8 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from llama_index.core.schema import NodeWithScore
 
-from app.config import AGENT_ANSWER_PROMPT, AGENT_DECIDE_PROMPT, MAX_AGENT_STEPS
+from app.agent_tools import dispatch_tool, tool_schemas
+from app.config import AGENT_ANSWER_PROMPT, AGENT_DECIDE_PROMPT, ENABLE_NATIVE_TOOL_CALLING, MAX_AGENT_STEPS
 from app.graph_index import graph_retrieve
 from app.index import build_context, format_nodes, get_llm, retrieve_nodes
 from app.trace import log_event, new_trace_id
@@ -37,6 +38,55 @@ def _parse_decision(text: str) -> dict:
 
 def _evidence_text(evidence: list[NodeWithScore]) -> str:
     return build_context(evidence) if evidence else "（暂无）"
+
+
+def _decide_with_native_tools(state: AgentState) -> list[NodeWithScore] | None:
+    if not ENABLE_NATIVE_TOOL_CALLING:
+        return None
+    llm = get_llm()
+    if not hasattr(llm, "chat"):
+        return None
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": state["question"]}],
+            tools=tool_schemas(),
+            tool_choice="auto",
+        )
+    except Exception:
+        return None
+
+    message = getattr(response, "message", response)
+    tool_calls = getattr(message, "tool_calls", None)
+    if not tool_calls and isinstance(message, dict):
+        tool_calls = message.get("tool_calls")
+    if not tool_calls:
+        return None
+
+    evidence: list[NodeWithScore] = []
+    for call in tool_calls:
+        function = getattr(call, "function", None)
+        if function is None and isinstance(call, dict):
+            function = call.get("function")
+        name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+        if isinstance(function, dict):
+            name = function.get("name")
+            arguments = function.get("arguments")
+        if not name:
+            return None
+        try:
+            args = json.loads(arguments or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return None
+        evidence.extend(
+            dispatch_tool(
+                name,
+                args.get("query") or state["question"],
+                int(args.get("top_k") or state["top_k"]),
+                allowed_sources=state.get("allowed_sources"),
+            )
+        )
+    return evidence
 
 
 def _decide(state: AgentState) -> dict:
