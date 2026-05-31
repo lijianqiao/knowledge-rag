@@ -20,7 +20,26 @@
 - **链路追踪**：每次 `ask` / `agent` 写结构化 JSONL trace（路由决策、检索分、rerank TopK、答案长度），`scripts/replay.py` 可回放复现。
 - **提示词注入防御**：检索内容统一经 `sanitize_context` 中和越权指令并用 `<<DOC>>` 包裹，系统提示词约束 LLM 不执行资料内指令。
 - **流式输出**：`ask --stream` 增量打印答案 token（单趟检索、无重试）。
-- **语义缓存 / auto-merging 父子索引（可选 / 实验）**：模块与开关已就位（`ENABLE_SEMANTIC_CACHE` / `ENABLE_AUTO_MERGE`，默认关闭），但尚未接入检索热路径，作 opt-in 实验能力。
+- **语义缓存（可选）**：`ENABLE_SEMANTIC_CACHE=true` 时 `ask` 按问题向量相似度命中缓存直接返回，命中 / 未命中写入 trace（默认关闭）。
+- **auto-merging 父子索引（可选）**：`ENABLE_AUTO_MERGE=true` 时 `import --force` 同源重建父子索引，检索热路径命中叶子块时合并回父块返回（默认关闭，仅全类型、无 RBAC 白名单时生效）。
+- **原生工具调用（可选）**：`ENABLE_NATIVE_TOOL_CALLING=true` 时 Agent 优先走模型原生 tool-calling，失败安全回退既有 JSON-decide 多步循环（默认关闭）。
+
+## 能力矩阵
+
+| Capability | Status | Entry point |
+| --- | --- | --- |
+| Hybrid retrieval | Done | `app/index.py` |
+| Reranking | Done | `app/rerankers.py` |
+| GraphRAG | Done | `app/graph_index.py` |
+| Agentic RAG | Done | `app/agent.py` |
+| Native tool calling | Optional | `ENABLE_NATIVE_TOOL_CALLING=true` |
+| Streaming | Done | `ask --stream`, `/ask/stream` |
+| Evaluation | Done | `main.py eval` |
+| Incremental freshness | Done | `import --incremental` |
+| Observability | Done | `logs/trace-*.jsonl`, `scripts/replay.py` |
+| HITL sessions | Done | `/sessions` |
+| Auto-merging retrieval | Optional | `ENABLE_AUTO_MERGE=true` |
+| Multimodal RAG | Deferred | `docs/production-boundaries.md` |
 
 ## 技术栈
 
@@ -207,7 +226,7 @@ uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
 - **评估**：`uv run python main.py eval --set eval/goldset.example.json` 遍历评测集（每条含 `question` 与 `expected_source_substrings`），对每条跑一次问答后算三项指标——确定性 `context_recall`（期望来源子串在检索 source 中的命中比例）、LLM-as-judge 的 `faithfulness`（答案是否被 context 支撑）与 `relevancy`（是否切题），最后打印聚合均值。裁判走 `get_llm()`，可借云端更强模型当裁判。
 - **链路追踪**：`ENABLE_TRACE=true`（默认开启）时，每次 `ask` / `agent` 把关键事件写成 JSON Lines 到 `TRACE_DIR`（默认 `./logs`，已 gitignore）下的 `trace-<id>.jsonl`，记录路由决策、查询改写前后、检索最高分、rerank TopK 的 source+score、答案长度等。设 `ENABLE_TRACE=false` 时埋点零成本。
 - **回放复现**：`uv run python scripts/replay.py <trace_id>` 读对应 jsonl 打印该次完整链路，便于离线调试某次问答。
-- **可选 / 实验模块**：语义缓存（`app/cache.py`）与 auto-merging 父子索引（`app/automerge.py`）的模块与开关（`ENABLE_SEMANTIC_CACHE` / `ENABLE_AUTO_MERGE`，默认关闭）已就位，但**尚未接入检索热路径**，目前为 opt-in 的实验能力。
+- **可选检索增强**：语义缓存（`app/cache.py`，`ENABLE_SEMANTIC_CACHE`）已接入 `run_ask`（命中 / 未命中写 trace），auto-merging 父子索引（`app/automerge.py`，`ENABLE_AUTO_MERGE`）已接入 `import --force` 构建与 `retrieve_nodes` 热路径，二者默认关闭、为 opt-in 能力。
 
 ## 服务化 / API
 
@@ -249,6 +268,10 @@ curl localhost:8000/sessions/<thread_id>
 - **提示词注入防御（始终开启）**：检索到的内容在组装 context 时统一经 `sanitize_context` 中和常见越权指令（中英），并用 `<<DOC>>...<</DOC>>` 分隔符包裹；系统提示词明确要求 LLM 仅将 `<<DOC>>` 内文本视为资料、绝不执行其中任何指令。
 - **文档级访问控制（应用层钩子）**：`index.build_access_filters(doc_type, allowed_sources)` 生成叠加 `source IN allowed` 的元数据过滤（Chroma 无原生 RBAC）。多用户调用方可把 `user → allowed_sources` 映射后传入，限定该用户可见的文档范围。
 
+## 生产边界（Production boundaries）
+
+本仓库是**文本优先**的 RAG 知识库。多模态 RAG（OCR / 表格 / 图表理解）、推理服务优化（投机解码 / 动态批处理 / KV-cache 调优）、Embedding 存储优化（Matryoshka / 维度迁移）等能力**有意未在本应用内实现**，因为它们需要独立的模型服务、数据管线或基础设施。详见 [`docs/production-boundaries.md`](docs/production-boundaries.md)。
+
 ## Docker
 
 `docker build -t ops-rag .` 构建镜像（`python:3.14-slim` + uv 多阶段）。默认 `CMD` 为 `serve`（容器内绑 `0.0.0.0:8000`）：
@@ -285,8 +308,8 @@ app/
   eval.py            评估：context_recall + LLM-as-judge faithfulness/relevancy + run_eval
   manifest.py        增量导入的内容 hash 清单读写与 diff
   trace.py           结构化 JSONL 链路追踪（new_trace_id / log_event）
-  cache.py           进程内语义缓存 SemanticCache（可选 / 实验，未接入热路径）
-  automerge.py       auto-merging 父子索引（可选 / 实验，未接入热路径）
+  cache.py           进程内语义缓存 SemanticCache（可选，ENABLE_SEMANTIC_CACHE，已接入 run_ask）
+  automerge.py       auto-merging 父子索引（可选，ENABLE_AUTO_MERGE，已接入 import --force / retrieve_nodes）
 scripts/
   replay.py          按 trace_id 回放某次链路（路由 / 改写 / 检索分 / 答案）
 运维prompt库/         prompt 文档源（doc_type=prompt）
