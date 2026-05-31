@@ -209,6 +209,41 @@ uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
 - **回放复现**：`uv run python scripts/replay.py <trace_id>` 读对应 jsonl 打印该次完整链路，便于离线调试某次问答。
 - **可选 / 实验模块**：语义缓存（`app/cache.py`）与 auto-merging 父子索引（`app/automerge.py`）的模块与开关（`ENABLE_SEMANTIC_CACHE` / `ENABLE_AUTO_MERGE`，默认关闭）已就位，但**尚未接入检索热路径**，目前为 opt-in 的实验能力。
 
+## 服务化 / API
+
+把 RAG 引擎包成一个 **API-only 的 FastAPI 服务**（薄服务层，仅鉴权 → 调现有引擎 → 序列化）。
+
+```bash
+# 起服务（默认 127.0.0.1:8000；可用 --host/--port 或 SERVE_HOST/SERVE_PORT 覆盖）
+uv run python main.py serve
+uv run python main.py serve --host 0.0.0.0 --port 8000
+```
+
+**鉴权（API-Key）**：`API_KEYS` 为 JSON 映射 `key → {user, allowed_sources}`，例如
+`API_KEYS={"sk-alice":{"user":"alice","allowed_sources":["运维文档"]}}`。
+请求带 `X-API-Key` 头；命中后该用户**只能检索其 `allowed_sources`**（RBAC 经检索链路真正生效）。
+**`API_KEYS` 为空 = 开放模式（不鉴权、全量可见），仅适合本机/可信网络；对外暴露务必配置。**
+
+**端点**（curl 示例，鉴权模式下加 `-H "X-API-Key: sk-alice"`）：
+
+```bash
+curl localhost:8000/health
+curl -X POST localhost:8000/ask        -H "Content-Type: application/json" -d '{"question":"订单服务502怎么排查","top_k":5,"doc_type":"all"}'
+curl -N -X POST localhost:8000/ask/stream -H "Content-Type: application/json" -d '{"question":"..."}'   # SSE 流式
+curl -X POST localhost:8000/query      -H "Content-Type: application/json" -d '{"question":"...","top_k":5}'
+curl localhost:8000/status
+curl -X POST localhost:8000/agent      -H "Content-Type: application/json" -d '{"question":"..."}'   # 需 ENABLE_AGENT=true，否则 403
+curl -X POST localhost:8000/eval       -H "Content-Type: application/json" -d '{"goldset":"eval/goldset.example.json"}'
+# 持久化会话 + 人机循环（SQLite checkpointer）
+curl -X POST localhost:8000/sessions   -H "Content-Type: application/json" -d '{"question":"...","require_approval":true}'   # 返回 {status:interrupted, thread_id, pending}
+curl -X POST localhost:8000/sessions/<thread_id>/resume -d '{}'   # 审批后继续 → {status:done, answer}
+curl localhost:8000/sessions/<thread_id>
+```
+
+**服务相关配置**：`SERVE_HOST`/`SERVE_PORT`、`API_KEYS`、`REQUEST_TIMEOUT`（非流式端点软上限，超时 504）、`CHECKPOINT_DB`（会话持久化 sqlite，默认 `./sessions.sqlite`）；可选 `ENABLE_LANGFUSE` + `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`（接观测平台，默认关，需 `uv add langfuse`）。
+
+> 关于 `REQUEST_TIMEOUT`：阻塞调用经 `anyio.to_thread` 卸载到线程池避免阻塞事件循环，但 `anyio.fail_after` **无法强杀**已在运行的 worker 线程——真正防 LLM 挂死的是 `LLM_TIMEOUT`（httpx 超时）。`REQUEST_TIMEOUT` 是软上限。
+
 ## 安全
 
 - **提示词注入防御（始终开启）**：检索到的内容在组装 context 时统一经 `sanitize_context` 中和常见越权指令（中英），并用 `<<DOC>>...<</DOC>>` 分隔符包裹；系统提示词明确要求 LLM 仅将 `<<DOC>>` 内文本视为资料、绝不执行其中任何指令。
@@ -216,16 +251,26 @@ uv run python main.py ask "订单服务 502 怎么排查" -n 5 --type all
 
 ## Docker
 
-`docker build -t ops-rag .` 构建镜像（`python:3.14-slim` + uv 多阶段）；`docker run --rm ops-rag ask "问题"` 运行（`ENTRYPOINT` 已指向 `main.py`）。模型仍由外部 llama.cpp 服务或云端 OpenAI 兼容端点提供，需通过环境变量 / 网络可达。
+`docker build -t ops-rag .` 构建镜像（`python:3.14-slim` + uv 多阶段）。默认 `CMD` 为 `serve`（容器内绑 `0.0.0.0:8000`）：
+
+```bash
+docker run -p 8000:8000 --env-file .env ops-rag            # 起 API 服务（默认）
+docker run --rm --env-file .env ops-rag import --force     # 跑其他子命令（ENTRYPOINT=main.py）
+```
+
+模型仍由外部 llama.cpp 服务或云端 OpenAI 兼容端点提供，需通过环境变量 / 网络可达。
 
 ## 项目结构
 
 ```
-main.py              CLI 入口：import / query / ask / graph-build / agent / eval / status
+main.py              CLI 入口：import / query / ask / graph-build / agent / eval / serve / status
 sources.toml         声明式数据源清单（filesystem / web）
-Dockerfile           python:3.14-slim + uv 多阶段构建（模型仍由外部提供）
+Dockerfile           python:3.14-slim + uv 多阶段构建（默认起 serve；模型仍由外部提供）
 app/
   config.py          配置（全部来自环境变量）
+  api/               FastAPI 服务层：app（工厂+/health）、auth（API-Key→Principal）、
+                     schemas、routes_rag（/ask /query /status /ask/stream /agent /eval）、
+                     routes_session（会话+HITL）、checkpoint（SqliteSaver）、observability（Langfuse 适配，可选）
   sources.py         解析 sources.toml → SourceConfig
   connectors/        连接器注册表：__init__（协议 + RawDocument + 注册表）、filesystem、web
   loader.py          按格式分块（md 走标题分块，其余走滑窗），经连接器加载

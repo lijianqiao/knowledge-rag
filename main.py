@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from app.agent import run_agent
-from app.config import ENABLE_AGENT, SOURCES_CONFIG_PATH
+from app.config import ENABLE_AGENT, SERVE_HOST, SERVE_PORT, SOURCES_CONFIG_PATH
 from app.eval import run_eval
 from app.graph import run_ask, run_ask_stream
 from app.import_docs import run_graph_build, run_import
@@ -60,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = sub.add_parser("eval", help="跑评测集（recall + LLM-as-judge faithfulness/relevancy）")
     p_eval.add_argument("--set", dest="goldset", default="eval/goldset.example.json", help="评测集 JSON 路径")
 
+    p_serve = sub.add_parser("serve", help="启动 FastAPI 服务（API-only）")
+    p_serve.add_argument("--host", default=SERVE_HOST, help=f"监听地址（默认 {SERVE_HOST}）")
+    p_serve.add_argument("--port", type=int, default=SERVE_PORT, help=f"监听端口（默认 {SERVE_PORT}）")
+
     sub.add_parser("status", help="向量库状态")
     return parser
 
@@ -89,6 +93,12 @@ def main() -> None:
             print(run_agent(args.text, top_k=args.n))
         elif args.command == "eval":
             print(run_eval(Path(args.goldset)))
+        elif args.command == "serve":
+            import uvicorn
+
+            from app.api.app import create_app
+
+            uvicorn.run(create_app(), host=args.host, port=args.port)
         elif args.command == "status":
             print(get_status())
     except ValueError as exc:

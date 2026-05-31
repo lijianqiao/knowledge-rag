@@ -34,5 +34,11 @@ COPY --from=builder /app /app
 # 用 venv 内解释器，免装 uv
 ENV PATH="/app/.venv/bin:$PATH"
 
+# 容器内默认对外监听（应用默认 127.0.0.1 仅本机；容器需 0.0.0.0 才可被映射访问）
+ENV SERVE_HOST=0.0.0.0
+EXPOSE 8000
+
+# 默认启动 FastAPI 服务；模型仍由外部 llama.cpp / 云端 OpenAI 兼容端点提供。
+# 跑其他子命令：docker run ... ops-rag import --force
 ENTRYPOINT ["python", "main.py"]
-CMD ["status"]
+CMD ["serve"]
