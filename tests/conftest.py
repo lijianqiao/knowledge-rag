@@ -52,6 +52,12 @@ def _reset_module_singletons():
             _agent._agent_graph = None
         except Exception:
             pass
+        try:
+            import app.cache as _cache
+
+            _cache._semantic_cache = None
+        except Exception:
+            pass
 
     _clear()
     yield

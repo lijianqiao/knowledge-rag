@@ -59,3 +59,24 @@ class SemanticCache:
     def clear(self) -> None:
         """清空缓存。"""
         self._store.clear()
+
+
+_semantic_cache: SemanticCache | None = None
+
+
+def get_semantic_cache() -> SemanticCache | None:
+    """返回进程内语义缓存单例；`ENABLE_SEMANTIC_CACHE=false` 时返回 None。"""
+    from app.config import CACHE_MAX_SIZE, CACHE_SIM_THRESHOLD, ENABLE_SEMANTIC_CACHE
+
+    global _semantic_cache
+    if not ENABLE_SEMANTIC_CACHE:
+        return None
+    if _semantic_cache is None:
+        _semantic_cache = SemanticCache(threshold=CACHE_SIM_THRESHOLD, max_size=CACHE_MAX_SIZE)
+    return _semantic_cache
+
+
+def reset_semantic_cache() -> None:
+    """清空语义缓存单例（重建索引/测试后调用）。"""
+    global _semantic_cache
+    _semantic_cache = None

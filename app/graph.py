@@ -11,6 +11,7 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 from llama_index.core.schema import NodeWithScore
 
+from app.cache import get_semantic_cache
 from app.config import ENABLE_GRAPH, ENABLE_QUERY_REWRITE, MAX_RETRIEVE_RETRIES, RETRIEVE_TOP_K
 from app.graph_index import graph_retrieve
 from app.index import (
@@ -18,6 +19,7 @@ from app.index import (
     format_nodes,
     generate_answer,
     generate_answer_stream,
+    get_embed_model,
     is_retrieval_weak,
     retrieve_with_diagnostics,
     rewrite_query,
@@ -208,6 +210,16 @@ def run_ask(
     Returns:
         答案与参考来源
     """
+    # 语义缓存：仅在无 RBAC 限定且默认类型时启用，避免跨用户/跨范围串答（安全）。
+    cacheable = allowed_sources is None and doc_type == "all"
+    cache = get_semantic_cache() if cacheable else None
+    q_emb: list[float] | None = None
+    if cache is not None:
+        q_emb = get_embed_model().get_query_embedding(question)
+        cached = cache.get(q_emb)
+        if cached is not None:
+            return cached
+
     graph = get_rag_graph()
     trace_id = new_trace_id()
     result = graph.invoke(
@@ -227,6 +239,8 @@ def run_ask(
             "allowed_sources": allowed_sources,
         }
     )
+    if cache is not None and q_emb is not None:
+        cache.put(q_emb, result["result"])
     return result["result"]
 
 
