@@ -84,6 +84,7 @@ def run_eval(
     ask_fn=None,
     faithfulness_fn=None,
     relevancy_fn=None,
+    output_format: str = "text",
 ) -> str:
     """跑评测集，返回人类可读报告字符串。
 
@@ -108,6 +109,8 @@ def run_eval(
         rows.append(
             {
                 "question": question,
+                "sources": sources,
+                "answer_chars": len(answer),
                 "recall": recall,
                 "faithfulness": faithfulness,
                 "relevancy": relevancy,
@@ -115,6 +118,9 @@ def run_eval(
         )
 
     agg = aggregate(rows)
+    if output_format == "json":
+        return json.dumps({"rows": rows, "aggregate": agg}, ensure_ascii=False, indent=2)
+
     lines = [f"评测集: {goldset_path}（共 {len(rows)} 条）", ""]
     for r in rows:
         lines.append(

@@ -59,12 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eval = sub.add_parser("eval", help="跑评测集（recall + LLM-as-judge faithfulness/relevancy）")
     p_eval.add_argument("--set", dest="goldset", default="eval/goldset.example.json", help="评测集 JSON 路径")
+    p_eval.add_argument("--format", dest="fmt", choices=["text", "json"], default="text", help="输出格式（json 为机器可读）")
 
     p_serve = sub.add_parser("serve", help="启动 FastAPI 服务（API-only）")
     p_serve.add_argument("--host", default=SERVE_HOST, help=f"监听地址（默认 {SERVE_HOST}）")
     p_serve.add_argument("--port", type=int, default=SERVE_PORT, help=f"监听端口（默认 {SERVE_PORT}）")
 
     sub.add_parser("status", help="向量库状态")
+    sub.add_parser("health", help="Deep health check")
     return parser
 
 
@@ -92,7 +94,7 @@ def main() -> None:
                 raise ValueError("跨文档推理 Agent 未启用，请设 ENABLE_AGENT=true")
             print(run_agent(args.text, top_k=args.n))
         elif args.command == "eval":
-            print(run_eval(Path(args.goldset)))
+            print(run_eval(Path(args.goldset), output_format=args.fmt))
         elif args.command == "serve":
             import uvicorn
 
@@ -101,6 +103,12 @@ def main() -> None:
             uvicorn.run(create_app(), host=args.host, port=args.port)
         elif args.command == "status":
             print(get_status())
+        elif args.command == "health":
+            import json
+
+            from app.health import deep_health
+
+            print(json.dumps(deep_health(), ensure_ascii=False, indent=2))
     except ValueError as exc:
         print(f"错误: {exc}", file=sys.stderr)
         sys.exit(1)

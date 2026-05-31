@@ -211,6 +211,7 @@ def run_ask(
         答案与参考来源
     """
     # 语义缓存：仅在无 RBAC 限定且默认类型时启用，避免跨用户/跨范围串答（安全）。
+    trace_id = new_trace_id()
     cacheable = allowed_sources is None and doc_type == "all"
     cache = get_semantic_cache() if cacheable else None
     q_emb: list[float] | None = None
@@ -218,10 +219,11 @@ def run_ask(
         q_emb = get_embed_model().get_query_embedding(question)
         cached = cache.get(q_emb)
         if cached is not None:
+            log_event(trace_id, "cache", {"hit": True})
             return cached
+        log_event(trace_id, "cache", {"hit": False})
 
     graph = get_rag_graph()
-    trace_id = new_trace_id()
     result = graph.invoke(
         {
             "question": question,

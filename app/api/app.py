@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from app.api import routes_rag, routes_session
+from app.health import deep_health
 
 
 def create_app() -> FastAPI:
@@ -11,6 +12,10 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/health/deep")
+    def health_deep() -> dict:
+        return deep_health()
 
     app.include_router(routes_rag.router)
     app.include_router(routes_session.router)
