@@ -10,7 +10,8 @@ from pathlib import Path
 
 from llama_index.core.schema import TextNode
 
-from app.config import COLLECTION_NAME, MANIFEST_PATH
+from app.automerge import build_automerge_index
+from app.config import COLLECTION_NAME, ENABLE_AUTO_MERGE, MANIFEST_PATH
 from app.graph_index import build_graph_index
 from app.index import (
     delete_chroma_collection,
@@ -99,6 +100,9 @@ def run_import(source: str = "all", force: bool = False, upsert: bool = False, i
         delete_chroma_collection()
         reset_index_cache()
         insert_text_nodes(nodes)
+        # auto-merging（opt-in）：与向量库同源重建父子索引，供检索热路径短路使用。
+        if ENABLE_AUTO_MERGE:
+            build_automerge_index([record.text for record in records])
         print(f"已重建并导入 {len(nodes)} 个 chunk → {COLLECTION_NAME}")
         return len(nodes)
 

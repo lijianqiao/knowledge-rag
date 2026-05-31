@@ -23,6 +23,7 @@ from app.config import (
     CHAT_BASE_URL,
     COLLECTION_NAME,
     DB_PATH,
+    ENABLE_AUTO_MERGE,
     ENABLE_HYBRID,
     ENABLE_MULTI_QUERY,
     LLM_TIMEOUT,
@@ -311,6 +312,19 @@ def _retrieve_core(
     return final, best_vector_score
 
 
+def _automerge_hooks():
+    """惰性取 auto-merge 钩子：规避与 app.automerge 的循环导入（automerge 反向 import 本模块）。
+
+    优先用模块级全局（测试可 monkeypatch idx.automerge_store_exists / idx.auto_merge_retrieve），
+    缺失时才在调用期真正 import。
+    """
+    store_exists = globals().get("automerge_store_exists")
+    retrieve = globals().get("auto_merge_retrieve")
+    if store_exists is None or retrieve is None:
+        from app.automerge import auto_merge_retrieve as retrieve, automerge_store_exists as store_exists
+    return store_exists, retrieve
+
+
 def retrieve_nodes(
     query: str,
     top_k: int = 5,
@@ -318,6 +332,13 @@ def retrieve_nodes(
     allowed_sources: list[str] | None = None,
 ) -> list[NodeWithScore]:
     """通用检索入口（CLI query / 图首检索复用）。"""
+    # auto-merging（opt-in）：仅全类型、无 RBAC 白名单且父子索引已构建时短路接入；命中即返回父块。
+    if ENABLE_AUTO_MERGE and doc_type == "all" and allowed_sources is None:
+        store_exists, auto_retrieve = _automerge_hooks()
+        if store_exists():
+            merged = auto_retrieve(query, top_k)
+            if merged:
+                return merged
     nodes, _ = _retrieve_core(
         query, top_k, doc_type, want_vector_score=False, allowed_sources=allowed_sources
     )
