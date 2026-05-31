@@ -1,6 +1,8 @@
 """provider 切换：按 CHAT_PROVIDER/EMBED_PROVIDER 选 base_url/model/key。"""
 
-import app.index as m
+# 模型客户端构造逻辑已拆到 app.models；此测试验证构造内部（OpenAILike/_llm/provider），
+# 须对 app.models 命名空间打桩（index 只是 re-export）。
+import app.models as m
 
 
 def test_llm_local(monkeypatch):

@@ -16,33 +16,18 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 from llama_index.core.vector_stores import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.core.vector_stores.utils import node_to_metadata_dict
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai_like import OpenAILike
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.config import (
-    API_KEY,
     BM25_TOP_K,
     CHAT_BASE_URL,
-    CHAT_MODEL,
-    CHAT_PROVIDER,
-    CLOUD_CHAT_API_KEY,
-    CLOUD_CHAT_BASE_URL,
-    CLOUD_CHAT_MODEL,
-    CLOUD_EMBED_API_KEY,
-    CLOUD_EMBED_BASE_URL,
-    CLOUD_EMBED_MODEL,
     COLLECTION_NAME,
     CONTEXT_CHUNK_MAX_CHARS,
     DB_PATH,
-    EMBED_BASE_URL,
-    EMBED_MODEL,
-    EMBED_PROVIDER,
     ENABLE_HYBRID,
     ENABLE_MULTI_QUERY,
-    LLM_MAX_TOKENS,
     LLM_TIMEOUT,
     MULTI_QUERY_NUM,
     MULTI_QUERY_PROMPT,
@@ -51,43 +36,12 @@ from app.config import (
     RETRIEVE_CANDIDATE_K,
     RETRIEVE_SCORE_THRESHOLD,
 )
+# 模型客户端已拆到 app.models；此处 re-export 以保持 `from app.index import get_llm/get_embed_model` 兼容
+from app.models import get_embed_model, get_llm
 from app.rerankers import get_reranker
 
-_embed_model: OpenAIEmbedding | None = None
-_llm: OpenAILike | None = None
 _index: VectorStoreIndex | None = None
 _bm25_retrievers: dict[str, BM25Retriever] = {}
-
-
-def get_embed_model() -> OpenAIEmbedding:
-    """获取 LlamaIndex Embedding 模型（按 EMBED_PROVIDER 选 local/cloud）。"""
-    global _embed_model
-    if _embed_model is None:
-        if EMBED_PROVIDER == "cloud":
-            base, model, key = CLOUD_EMBED_BASE_URL, CLOUD_EMBED_MODEL, CLOUD_EMBED_API_KEY
-        else:
-            base, model, key = EMBED_BASE_URL, EMBED_MODEL, API_KEY
-        _embed_model = OpenAIEmbedding(
-            model="text-embedding-ada-002",  # 占位，真实模型由 model_name 决定
-            model_name=model, api_base=base, api_key=key,
-        )
-    return _embed_model
-
-
-def get_llm() -> OpenAILike:
-    """获取 OpenAI 兼容 Chat 模型（按 CHAT_PROVIDER 选 local/cloud）。"""
-    global _llm
-    if _llm is None:
-        if CHAT_PROVIDER == "cloud":
-            base, model, key = CLOUD_CHAT_BASE_URL, CLOUD_CHAT_MODEL, CLOUD_CHAT_API_KEY
-        else:
-            base, model, key = CHAT_BASE_URL, CHAT_MODEL, API_KEY
-        _llm = OpenAILike(
-            model=model, api_base=base, api_key=key,
-            is_chat_model=True, temperature=0.2, context_window=8192,
-            timeout=LLM_TIMEOUT, max_tokens=LLM_MAX_TOKENS,
-        )
-    return _llm
 
 
 def reset_index_cache() -> None:
