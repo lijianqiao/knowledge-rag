@@ -42,12 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_query = sub.add_parser("query", help="调试检索（LlamaIndex → ChromaDB）")
     p_query.add_argument("text")
     p_query.add_argument("-n", type=int, default=5)
-    p_query.add_argument("--type", choices=["all", "prompt", "doc"], default="all")
+    p_query.add_argument("--type", choices=["all", "doc"], default="all")
 
     p_ask = sub.add_parser("ask", help="RAG 问答（LangGraph 编排）")
     p_ask.add_argument("text")
     p_ask.add_argument("-n", type=int, default=5)
-    p_ask.add_argument("--type", choices=["all", "prompt", "doc"], default="all")
+    p_ask.add_argument("--type", choices=["all", "doc"], default="all")
     p_ask.add_argument("--stream", action="store_true", help="流式增量输出（单趟检索，无重试）")
 
     p_graph = sub.add_parser("graph-build", help="构建知识图谱（GraphRAG，慢）")

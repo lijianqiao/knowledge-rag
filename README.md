@@ -1,6 +1,6 @@
 # 运维知识库 RAG（LangGraph + LlamaIndex + ChromaDB）
 
-把本地 Markdown 运维文档（`运维prompt库/`、`运维文档/`）分块向量化入 ChromaDB，再用 LangGraph 编排检索与问答的命令行 RAG 工具。所有 LLM / Embedding 调用走 OpenAI 兼容接口，默认指向本地 llama.cpp 服务。
+把本地 Markdown 运维文档（`运维文档/`）分块向量化入 ChromaDB，再用 LangGraph 编排检索与问答的命令行 RAG 工具。所有 LLM / Embedding 调用走 OpenAI 兼容接口，默认指向本地 llama.cpp 服务。
 
 ## 特性
 
@@ -11,7 +11,7 @@
 - **RAG 问答**：LangGraph 编排「检索 → 生成 → 输出」，召回偏弱时自动扩大范围重检索。
 - **可插拔 Reranker**：默认走 HTTP rerank API（免本地大模型下载），可切回本地 cross-encoder。
 - **多查询扩展**：可选用 LLM 把原问题扩展成多条变体并行检索后融合。
-- **类型过滤**：按 `prompt` / `doc` 文档类型过滤检索范围。
+- **类型过滤**：按 `doc_type`（源在 `sources.toml` 声明）过滤检索范围。
 - **GraphRAG（知识图谱检索）**：可选用本地 LLM 从文档抽取实体关系建知识图谱，按子图召回回答关系 / 影响链 / 根因传播类问题。
 - **问题类型路由**：`ask` 按问题类型自动在图检索与向量检索之间选通道，误判或图谱未构建时安全回退向量检索。
 - **跨文档推理 Agent**：显式 plan→act→reflect 多步循环（LangGraph，非原生 function-calling），跨文档收集证据后作答。
@@ -24,26 +24,9 @@
 - **auto-merging 父子索引（可选）**：`ENABLE_AUTO_MERGE=true` 时 `import --force` 同源重建父子索引，检索热路径命中叶子块时合并回父块返回（默认关闭，仅全类型、无 RBAC 白名单时生效）。
 - **原生工具调用（可选）**：`ENABLE_NATIVE_TOOL_CALLING=true` 时 Agent 优先走模型原生 tool-calling，失败安全回退既有 JSON-decide 多步循环（默认关闭）。
 
-## 能力矩阵
-
-| Capability | Status | Entry point |
-| --- | --- | --- |
-| Hybrid retrieval | Done | `app/index.py` |
-| Reranking | Done | `app/rerankers.py` |
-| GraphRAG | Done | `app/graph_index.py` |
-| Agentic RAG | Done | `app/agent.py` |
-| Native tool calling | Optional | `ENABLE_NATIVE_TOOL_CALLING=true` |
-| Streaming | Done | `ask --stream`, `/ask/stream` |
-| Evaluation | Done | `main.py eval` |
-| Incremental freshness | Done | `import --incremental` |
-| Observability | Done | `logs/trace-*.jsonl`, `scripts/replay.py` |
-| HITL sessions | Done | `/sessions` |
-| Auto-merging retrieval | Optional | `ENABLE_AUTO_MERGE=true` |
-| Multimodal RAG | Deferred | `docs/production-boundaries.md` |
-
 ## 技术栈
 
-Python ≥ 3.14、[uv](https://docs.astral.sh/uv/)、LlamaIndex、ChromaDB、LangGraph、OpenAI 兼容客户端（本地 llama.cpp）。
+Python ≥ 3.12、[uv](https://docs.astral.sh/uv/)、LlamaIndex、ChromaDB、LangGraph、OpenAI 兼容客户端（本地 llama.cpp）。
 
 ## 安装
 
@@ -104,6 +87,7 @@ GRAPH_MAX_PATHS_PER_CHUNK=10
 # 跨文档推理 Agent（默认关闭）
 ENABLE_AGENT=false
 MAX_AGENT_STEPS=4
+ENABLE_NATIVE_TOOL_CALLING=false         # 开启后 Agent 优先走原生 tool-calling，失败回退 JSON-decide
 
 # LLM / Embedding 提供方切换：local（本地 llama.cpp）| cloud（OpenAI 兼容云端点），两角色独立
 CHAT_PROVIDER=local
@@ -126,12 +110,12 @@ MANIFEST_PATH=./.rag_manifest.json
 ENABLE_TRACE=true
 TRACE_DIR=./logs
 
-# 语义缓存（默认关闭；本期仅建模块+开关，未接入检索热路径）
+# 语义缓存（默认关闭；开启后已接入 ask，命中/未命中写 trace）
 ENABLE_SEMANTIC_CACHE=false
 CACHE_SIM_THRESHOLD=0.97
 CACHE_MAX_SIZE=128
 
-# auto-merging 父子索引（默认关闭；本期仅建模块+持久化，未接入检索热路径）
+# auto-merging 父子索引（默认关闭；开启后 import --force 建索引、检索热路径合并回父块）
 ENABLE_AUTO_MERGE=false
 AUTO_MERGE_CHUNK_SIZES=2048,512,128
 AUTO_MERGE_PERSIST_DIR=./automerge_store
@@ -170,7 +154,50 @@ uv run python main.py agent "订单故障会牵连哪些服务" -n 6
 uv run python main.py status
 ```
 
-`--type` 可选 `all` / `prompt` / `doc`；`-n` 指定返回条数（`agent` 的 `-n` 为每步检索条数）。
+`--type` 可选 `all` / `doc`；`-n` 指定返回条数（`agent` 的 `-n` 为每步检索条数）。
+
+## 冒烟测试
+
+> PowerShell 里 `$env:X = "true"` 只对当前终端会话生效（换终端要重设，想固定就写进 `.env`）；切 `ENABLE_AUTO_MERGE` 或 `EMBED_PROVIDER` 后必须 `import --force` 重建索引。
+
+```powershell
+# 1. 离线逻辑测试（不连模型）
+uv run pytest -q
+
+# 2. 默认链路（全开关关闭，先过这条）
+uv run python main.py import --force
+uv run python main.py status
+uv run python main.py health                          # 组件状态 JSON
+uv run python main.py query "如何重启服务" -n 5            # 纯检索，不调 LLM
+uv run python main.py ask "订单服务 502 怎么排查" -n 5
+uv run python main.py ask "订单服务 502 怎么排查" --stream
+uv run python main.py eval --set eval/goldset.example.json --format json
+
+# 3. GraphRAG + Agent（需先建图，慢）
+uv run python main.py graph-build --source all
+$env:ENABLE_GRAPH = "true";  uv run python main.py ask "订单故障会牵连哪些服务" -n 6
+$env:ENABLE_AGENT = "true";  uv run python main.py agent "订单故障会牵连哪些服务" -n 6
+
+# 4. auto-merging（必须 import --force 重建父子索引后才生效）
+$env:ENABLE_AUTO_MERGE = "true"
+uv run python main.py import --force
+uv run python main.py ask "订单服务 502 怎么排查"
+
+# 5. 原生工具调用（依赖 chat 模型真支持 tool_calls，不支持会安全回退 JSON-decide）
+$env:ENABLE_NATIVE_TOOL_CALLING = "true"; $env:ENABLE_AGENT = "true"
+uv run python main.py agent "订单故障会牵连哪些服务"
+```
+
+**语义缓存（注意：缓存是进程内的）**：缓存是进程内单例、无磁盘持久化，两次独立的 `main.py ask` 是两个进程，第二次缓存为空必然 miss。要验证命中，两次提问必须在**同一进程**内——用常驻的 API 服务（同一终端先设开关再起服务）：
+
+```powershell
+$env:ENABLE_SEMANTIC_CACHE = "true"
+uv run python main.py serve
+# 另开终端，对同一问题连发两次（doc_type=all 且无 API-Key 才会缓存）：
+curl -X POST localhost:8000/ask -H "Content-Type: application/json" -d '{"question":"订单服务502怎么排查","top_k":5,"doc_type":"all"}'
+curl -X POST localhost:8000/ask -H "Content-Type: application/json" -d '{"question":"订单服务502怎么排查","top_k":5,"doc_type":"all"}'
+# 第二次响应明显变快，对应 trace 里出现 {"event":"cache","hit":true}
+```
 
 ## 问答流程
 
@@ -268,10 +295,6 @@ curl localhost:8000/sessions/<thread_id>
 - **提示词注入防御（始终开启）**：检索到的内容在组装 context 时统一经 `sanitize_context` 中和常见越权指令（中英），并用 `<<DOC>>...<</DOC>>` 分隔符包裹；系统提示词明确要求 LLM 仅将 `<<DOC>>` 内文本视为资料、绝不执行其中任何指令。
 - **文档级访问控制（应用层钩子）**：`index.build_access_filters(doc_type, allowed_sources)` 生成叠加 `source IN allowed` 的元数据过滤（Chroma 无原生 RBAC）。多用户调用方可把 `user → allowed_sources` 映射后传入，限定该用户可见的文档范围。
 
-## 生产边界（Production boundaries）
-
-本仓库是**文本优先**的 RAG 知识库。多模态 RAG（OCR / 表格 / 图表理解）、推理服务优化（投机解码 / 动态批处理 / KV-cache 调优）、Embedding 存储优化（Matryoshka / 维度迁移）等能力**有意未在本应用内实现**，因为它们需要独立的模型服务、数据管线或基础设施。详见 [`docs/production-boundaries.md`](docs/production-boundaries.md)。
-
 ## Docker
 
 `docker build -t ops-rag .` 构建镜像（`python:3.14-slim` + uv 多阶段）。默认 `CMD` 为 `serve`（容器内绑 `0.0.0.0:8000`）：
@@ -312,7 +335,6 @@ app/
   automerge.py       auto-merging 父子索引（可选，ENABLE_AUTO_MERGE，已接入 import --force / retrieve_nodes）
 scripts/
   replay.py          按 trace_id 回放某次链路（路由 / 改写 / 检索分 / 答案）
-运维prompt库/         prompt 文档源（doc_type=prompt）
 运维文档/             运维文档源（doc_type=doc）
 ```
 
@@ -341,31 +363,3 @@ urls = ["https://example.com/runbook"]
 - 必填字段：`name` / `type` / `doc_type`；其余按类型放在同一块（filesystem 用 `root`/`glob`/`exclude`，web 用 `urls`）。
 - 分块 `chunk_id` 形如 `{doc_type}_{相对路径下划线化}__{序号}`，`--upsert` 依赖该 id 稳定。
 - filesystem 源根目录下每个一级子目录会作为 `category` 元数据。`.md` 走二级标题分块，其余格式走字符滑窗分块。
-
-## 扩展性与向量库选型（预案）
-
-> 决定要不要换"重型向量库"的是**数据量与并发**，不是公司人数。当前架构（ChromaDB 稠密 + 进程内 `bm25s`+jieba 稀疏 + reranker）对**几千人规模、低 QPS 的运维知识库足够**，无需升级。
-
-**何时才考虑升级（量化触发阈值，满足任一）**
-
-- chunk 总量 > ~100 万，或单机内存吃紧 / 启动明显变慢；
-- 持续并发 QPS > ~20–50；
-- 需要**学习式稀疏（BGE-M3）**进一步提升中文召回（ChromaDB 不支持稀疏向量 ANN）；
-- 需要多副本 / 高可用 / 在线扩容 / 快照。
-
-**升级路径优先级**
-
-1. **pgvector**（本仓库环境已有 PostgreSQL）→ 零新增服务，复用现有 Postgres 存稠密；要稀疏/BM25 可上 `VectorChord`/`pgvecto.rs`。最低摩擦。
-2. **Qdrant**（向量原生、轻量：单二进制 / Docker / 嵌入式 local 模式）→ **仅当要做 BGE-M3 学习式稀疏 hybrid 时选它**（这是它相对 Chroma 的唯一强理由：原生稀疏 + server 端融合）。
-3. **Elasticsearch/OpenSearch + IK 分词** → 要做全公司级中文全文检索平台时。
-4. **Milvus** → 千万级向量 / 分布式才考虑，最重。
-
-**Qdrant 迁移预案（真要换时照此做）**
-
-- 触发条件：决定上 BGE-M3 学习式稀疏 hybrid。只为"换个更好的稠密库"不值得迁。
-- 依赖：`qdrant-client`、`llama-index-vector-stores-qdrant`；可先用 local 模式 `QdrantClient(path=...)`（Windows 免 Docker），生产单机 Docker。
-- 改动点（集中在 `app/index.py`）：`get_chroma_*`/`get_index`（`ChromaVectorStore`→`QdrantVectorStore`）、`delete_chroma_collection`、`load_all_nodes`（`chroma.get()`→Qdrant scroll）、`get_status`；新增 `QDRANT_*` 配置；**数据需重灌**。
-- 稀疏来源：用 FastEmbed(ONNX) 出 BGE-M3/SPLADE 稀疏 —— 代价是 **~2GB 进程内模型**（与当前 llama.cpp 纯服务化相悖，需接受）。
-- 灰度与回退：加 `VECTOR_BACKEND=chroma|qdrant` 开关，保留 Chroma 路径，可回退；用同一批问题对比召回/答案质量，确认提升再全量切。
-
-**结论**：当前规模不换。要升级优先 **pgvector（复用 Postgres）**；只有为 **BGE-M3 学习式稀疏**才上 **Qdrant**；ES/Milvus 留给平台级规模。
