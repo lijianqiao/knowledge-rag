@@ -34,10 +34,11 @@ from app.config import (
     RETRIEVE_CANDIDATE_K,
     RETRIEVE_SCORE_THRESHOLD,
 )
+
 # 模型客户端已拆到 app.models；此处 re-export 以保持 `from app.index import get_llm/get_embed_model` 兼容
 from app.models import get_embed_model, get_llm
+
 # context 组装 / 注入中和 / 结果格式化已拆到 app.context；re-export 保持既有导入兼容
-from app.context import build_context, format_nodes, sanitize_context
 from app.rerankers import get_reranker
 
 _index: VectorStoreIndex | None = None
@@ -321,7 +322,8 @@ def _automerge_hooks():
     store_exists = globals().get("automerge_store_exists")
     retrieve = globals().get("auto_merge_retrieve")
     if store_exists is None or retrieve is None:
-        from app.automerge import auto_merge_retrieve as retrieve, automerge_store_exists as store_exists
+        from app.automerge import auto_merge_retrieve as retrieve
+        from app.automerge import automerge_store_exists as store_exists
     return store_exists, retrieve
 
 

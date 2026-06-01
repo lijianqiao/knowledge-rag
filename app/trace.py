@@ -1,7 +1,6 @@
 """轻量结构化链路追踪（JSON Lines，零依赖）。可用 ENABLE_TRACE 关闭。"""
 
 import json
-import os
 import time
 import uuid
 from pathlib import Path

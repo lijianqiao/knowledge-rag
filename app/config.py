@@ -6,6 +6,7 @@
 @Docs: 应用配置与文档源定义
 """
 
+import json as _json
 import os
 
 from dotenv import load_dotenv
@@ -168,7 +169,6 @@ AUTO_MERGE_PERSIST_DIR = os.getenv("AUTO_MERGE_PERSIST_DIR", "./automerge_store"
 # ===== 服务化（FastAPI）=====
 # API_KEYS：JSON 映射 key -> {"user":..., "allowed_sources":[...]}；空 = 开放模式（不校验，allowed_sources=None=全部）
 # 健壮解析：格式非法时退回空 dict（开放模式）并告警，绝不让 config 导入崩溃。
-import json as _json
 
 
 def _parse_api_keys() -> dict:
